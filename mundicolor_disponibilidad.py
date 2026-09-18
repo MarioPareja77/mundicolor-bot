@@ -4,19 +4,15 @@ Comprueba la disponibilidad en https://www.mundicolor.es/availability
 
 - LOG en consola: muestra TODOS los días disponibles de cada combo.
 - EMAIL: solo se envía si algún día tiene un hotel de HOTELES_OBJETIVO.
-         Con PROBAR_EMAIL_SIN_FILTRO = True se envía email aunque no haya
-         hoteles objetivo (modo prueba para verificar el envío).
+- RESERVA: si HACER_RESERVA=True, al detectar un hotel (objetivo o cualquiera
+           si PROBAR_RESERVA_SIN_FILTRO=True) pulsa SELECCIONAR, marca
+           checkboxes y pulsa FINALIZAR RESERVA.
 
 Solo CONSULTA: no reserva nada.
-
-Instalación (una vez):
-    pip install playwright
-    playwright install chromium
 
 Uso:
     python mundicolor_disponibilidad.py                     # una pasada
     python mundicolor_disponibilidad.py --watch 5           # repite cada 5 min
-    python mundicolor_disponibilidad.py --solo BALEARES     # solo un destino
     python mundicolor_disponibilidad.py --debug             # navegador visible + capturas
 """
 import argparse
@@ -38,8 +34,8 @@ URL = "https://www.mundicolor.es/availability"
 
 # ----------------------------- DATOS ---------------------------------
 PASAJEROS = [
-    {"dni": "40428643W", "clave": "6075"},   # Pasajero 1
-    {"dni": "53072868T", "clave": "6075"},   # Pasajero 2
+    {"dni": "40428643W", "clave": "6075"},
+    {"dni": "53072868T", "clave": "6075"},
 ]
 MASCOTAS = False
 TRANSPORTE = "Sin transporte"
@@ -73,9 +69,12 @@ HOTELES_OBJETIVO = [
     "Parque Vacacional Eden",
 ]
 
-# === MODO PRUEBA: enviar email aunque no haya hoteles objetivo ===
-# Ponlo a True para probar el envío, y vuelve a False cuando confirmes que llega.
+# === MODO PRUEBA EMAIL ===
 PROBAR_EMAIL_SIN_FILTRO = True
+
+# === RESERVA ===
+HACER_RESERVA = True
+PROBAR_RESERVA_SIN_FILTRO = True   # True: prueba con cualquier hotel (el primero de cada día)
 # ---------------------------------------------------------------------
 
 # ----------------- FILTRO TEMPORAL POR DESTINO -----------------------
@@ -100,9 +99,7 @@ EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "marioparejanieto@gmail.com")
 EMAIL_SOLO_SI_HAY = True
 # ---------------------------------------------------------------------
 
-# --------------------------- CAPTCHA ---------------------------------
 CAPTCHA_TIMEOUT_S = 300
-# ---------------------------------------------------------------------
 
 OUT_DIR = Path(__file__).parent / "mundicolor_out"
 OUT_DIR.mkdir(exist_ok=True)
@@ -111,14 +108,16 @@ COOKIES_FILE = OUT_DIR / "cookies_ok.json"
 
 def shot(page, name, debug):
     if debug:
-        page.screenshot(path=str(OUT_DIR / f"{name}.png"), full_page=True)
+        try:
+            page.screenshot(path=str(OUT_DIR / f"{name}.png"), full_page=True)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------
-# NORMALIZACIÓN DE NOMBRES DE HOTEL
+# HOTELES
 # ---------------------------------------------------------------------
 def normalizar(s):
-    """Minúsculas, sin acentos, espacios colapsados."""
     if not s:
         return ""
     s = unicodedata.normalize("NFKD", s)
@@ -132,12 +131,19 @@ HOTELES_OBJETIVO_NORM = [normalizar(h) for h in HOTELES_OBJETIVO]
 
 
 def hotel_match(linea):
-    """
-    Devuelve el nombre del hotel de la lista que aparece en `linea`,
-    o None si no hay match.
-    """
     if PROBAR_EMAIL_SIN_FILTRO:
-        return "PRUEBA"          # ← cualquier línea "matchea" en modo prueba
+        return "PRUEBA"
+    n = normalizar(linea)
+    if not n:
+        return None
+    for h_orig, h_norm in zip(HOTELES_OBJETIVO, HOTELES_OBJETIVO_NORM):
+        if re.search(r"(?<![a-z])" + re.escape(h_norm) + r"(?![a-z])", n):
+            return h_orig
+    return None
+
+
+def hotel_match_estricto(linea):
+    """Igual que hotel_match pero SIN modo prueba. Para decidir si reservar."""
     n = normalizar(linea)
     if not n:
         return None
@@ -162,14 +168,12 @@ def cookies(page, debug=False):
             return False
 
     page.wait_for_timeout(800)
-
     if not banner_visible():
         if debug:
             print("      [cookies] sin banner (ya aceptado)")
         return True
 
     exito = False
-
     for sel in ["#onetrust-accept-btn-handler",
                 "button#onetrust-accept-btn-handler",
                 "button[aria-label*='Aceptar' i]"]:
@@ -178,8 +182,6 @@ def cookies(page, debug=False):
             btn.wait_for(state="visible", timeout=4000)
             btn.click()
             page.wait_for_timeout(700)
-            if debug:
-                print(f"      [cookies] clic en {sel}")
             if not banner_visible():
                 exito = True
                 break
@@ -198,8 +200,6 @@ def cookies(page, debug=False):
                 if btn.count() > 0:
                     btn.click(timeout=3000)
                     page.wait_for_timeout(700)
-                    if debug:
-                        print(f"      [cookies] clic en botón '{pat}'")
                     if not banner_visible():
                         exito = True
                         break
@@ -251,15 +251,9 @@ def cookies(page, debug=False):
 def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
     def hay_captcha_visible():
         try:
-            for sel in [
-                'iframe[src*="recaptcha"]',
-                'iframe[src*="hcaptcha"]',
-                'iframe[title*="captcha" i]',
-                'iframe[src*="challenges.cloudflare.com"]',
-                '.g-recaptcha',
-                '.h-captcha',
-                'div[class*="captcha" i]:visible',
-            ]:
+            for sel in ['iframe[src*="recaptcha"]','iframe[src*="hcaptcha"]',
+                        'iframe[title*="captcha" i]','iframe[src*="challenges.cloudflare.com"]',
+                        '.g-recaptcha','.h-captcha','div[class*="captcha" i]:visible']:
                 el = page.locator(sel).first
                 try:
                     if el.count() > 0 and el.is_visible(timeout=300):
@@ -288,8 +282,6 @@ def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
         return True
 
     print("   ⚠️  CAPTCHA detectado. Resuélvelo MANUALMENTE en la ventana del navegador.")
-    print(f"      El script esperará hasta {timeout_s // 60} minutos...")
-
     t0 = time.time()
     while (time.time() - t0) < timeout_s:
         if captcha_marcado() and not hay_captcha_visible():
@@ -303,7 +295,7 @@ def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
 
 
 # ---------------------------------------------------------------------
-# COMBOS / SELECTS
+# SELECTS
 # ---------------------------------------------------------------------
 def opciones_de(page, selector):
     return page.locator(selector).first.evaluate("e => [...e.options].map(o => o.text.trim())")
@@ -357,8 +349,6 @@ def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
             if t and t.lower() not in ("selecciona", "seleccione", "elige", "--", ""):
                 ctl.select_option(label=t)
                 page.wait_for_timeout(1200)
-                if debug:
-                    print(f"      → fallback: {selector} = '{t}'")
                 break
     return False
 
@@ -384,8 +374,6 @@ def rellenar_campo(page, etiqueta_regex, valor, fallbacks, debug=False):
             loc = page.locator(sel).first
             if loc.count() > 0:
                 loc.fill(valor, timeout=2500)
-                if debug:
-                    print(f"      [fill] '{etiqueta_regex.pattern}' por {sel}")
                 return True
         except Exception:
             continue
@@ -469,7 +457,7 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
 
 
 # ---------------------------------------------------------------------
-# EXTRACCIÓN + FILTRO
+# EXTRACCIÓN
 # ---------------------------------------------------------------------
 JS_DIAS_VERDES = """
 () => {
@@ -529,16 +517,131 @@ def detalle_dia(page, idx):
 
 
 # ---------------------------------------------------------------------
-# UNA PASADA DE UN (destino, provincia)
+# RESERVA (SELECCIONAR → nueva pestaña → checkboxes → FINALIZAR RESERVA)
 # ---------------------------------------------------------------------
-def comprobar_combo(page, destino, provincia, debug, primera=False):
+def intentar_reserva(page, context, linea_hotel, debug=False):
     """
-    Devuelve la lista COMPLETA de días (todos los del filtro temporal),
-    cada uno con:
-      - detalle: TODAS las líneas con €
-      - hoteles_objetivo: lista de hoteles de la lista que aparecen
-      - es_objetivo: True si hay al menos uno de HOTELES_OBJETIVO
+    Dada una línea de resultado (con €), localiza su fila, pulsa SELECCIONAR,
+    gestiona la nueva pestaña, marca las checkboxes y pulsa FINALIZAR RESERVA.
     """
+    print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
+
+    try:
+        # 1) Localizar la fila que contiene esa línea.
+        #    Probamos con el nombre del hotel (más específico que toda la línea).
+        #    Encontramos el primer token "significativo" del hotel: la parte antes del "|"
+        partes = [p.strip() for p in linea_hotel.split("|")]
+        nombre_hotel = partes[1] if len(partes) > 1 else partes[0]
+        print(f"      (nombre a buscar: '{nombre_hotel}')")
+
+        # Buscar el <tr> / <li> / <div> que contiene ese nombre
+        fila = None
+        for sel in ["tr", "li", "div"]:
+            loc = page.locator(sel).filter(has_text=re.compile(re.escape(nombre_hotel), re.I))
+            if loc.count() > 0:
+                fila = loc.last
+                break
+
+        if not fila:
+            print("      ✗ No encuentro la fila del hotel")
+            return False
+
+        # 2) Buscar botón SELECCIONAR dentro de la fila
+        btn_sel = fila.locator(
+            "button, a, input[type='button'], input[type='submit'], [role='button']"
+        ).filter(has_text=re.compile(r"seleccionar", re.I)).first
+
+        if btn_sel.count() == 0:
+            btn_sel = fila.get_by_role("button", name=re.compile(r"seleccionar", re.I)).first
+
+        if btn_sel.count() == 0:
+            print("      ✗ No encuentro botón SELECCIONAR en la fila")
+            if debug:
+                shot(page, "04_sin_boton_seleccionar", debug)
+            return False
+
+        # 3) Pulsar SELECCIONAR y capturar nueva pestaña o navegación
+        print("      → Pulsando SELECCIONAR...")
+        try:
+            with context.expect_page(timeout=8000) as nueva_info:
+                btn_sel.click()
+            nueva = nueva_info.value
+            print("      ✓ Nueva pestaña abierta")
+            usa_nueva_pestana = True
+        except PWTimeout:
+            print("      (no se abrió nueva pestaña, asumo navegación en la misma)")
+            page.wait_for_load_state("networkidle", timeout=15000)
+            nueva = page
+            usa_nueva_pestana = False
+
+        nueva.wait_for_timeout(2500)
+        if debug:
+            shot(nueva, "04_pagina_reserva", debug)
+
+        # 4) Marcar checkboxes visibles
+        checkboxes = nueva.locator("input[type='checkbox']")
+        n = checkboxes.count()
+        print(f"      Checkboxes encontradas: {n}")
+        marcadas = 0
+        for i in range(n):
+            cb = checkboxes.nth(i)
+            try:
+                if cb.is_visible() and not cb.is_checked():
+                    cb.check(timeout=3000)
+                    marcadas += 1
+                    print(f"      ✓ Checkbox {i+1} marcada")
+            except Exception as e:
+                print(f"      (checkbox {i+1} no marcada: {e})")
+
+        nueva.wait_for_timeout(1000)
+        if debug:
+            shot(nueva, "05_checkboxes_marcadas", debug)
+
+        # 5) Pulsar FINALIZAR RESERVA
+        print("      → Buscando FINALIZAR RESERVA...")
+        btn_final = nueva.locator(
+            "button, a, input[type='button'], input[type='submit'], [role='button']"
+        ).filter(has_text=re.compile(r"finalizar\s+reserva", re.I)).first
+
+        if btn_final.count() == 0:
+            print("      ✗ No encuentro botón FINALIZAR RESERVA")
+            if debug:
+                shot(nueva, "05_sin_boton_finalizar", debug)
+            if usa_nueva_pestana:
+                try:
+                    nueva.close()
+                except Exception:
+                    pass
+            return False
+
+        btn_final.click(timeout=5000)
+        print("      ✓ FINALIZAR RESERVA pulsado")
+        nueva.wait_for_timeout(3000)
+        if debug:
+            shot(nueva, "06_finalizado", debug)
+
+        # 6) Cerrar pestaña nueva si la había
+        if usa_nueva_pestana:
+            try:
+                nueva.close()
+            except Exception:
+                pass
+
+        return True
+    except Exception as e:
+        print(f"      [RESERVA ERROR] {e}")
+        if debug:
+            try:
+                shot(page, "error_reserva", debug)
+            except Exception:
+                pass
+        return False
+
+
+# ---------------------------------------------------------------------
+# UNA PASADA DE UN COMBO
+# ---------------------------------------------------------------------
+def comprobar_combo(page, context, destino, provincia, debug, primera=False):
     try:
         if primera:
             flujo_completo(page, destino, provincia, debug, con_login=True)
@@ -557,7 +660,6 @@ def comprobar_combo(page, destino, provincia, debug, primera=False):
 
         dias = page.evaluate(JS_DIAS_VERDES)
 
-        # Filtro temporal
         filtro = FILTRO_POR_DESTINO.get(destino.upper())
         dias_temporal_ok = []
         for d in dias:
@@ -567,10 +669,7 @@ def comprobar_combo(page, destino, provincia, debug, primera=False):
                 ma = mes_anio(d.get("mes", ""))
                 if ma and ma[0] == filtro["anio"] and ma[1] in filtro["meses"]:
                     dias_temporal_ok.append(d)
-                elif debug:
-                    print(f"      (descartado día {d['dia']} – mes '{d.get('mes') or '?'}')")
 
-        # Cargar detalle de CADA día (todos, para el log)
         dias_todos = []
         for d in dias_temporal_ok:
             detalle = detalle_dia(page, d["idx"])
@@ -585,6 +684,43 @@ def comprobar_combo(page, destino, provincia, debug, primera=False):
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
+
+            # ==== RESERVA ====
+            if HACER_RESERVA:
+                # Determinar qué líneas gatillan reserva
+                lineas_a_reservar = []
+                if PROBAR_RESERVA_SIN_FILTRO:
+                    # En modo prueba: el PRIMER hotel con € de cada día
+                    if detalle:
+                        lineas_a_reservar = [detalle[0]]
+                else:
+                    # Solo hoteles objetivo (estricto)
+                    for linea in detalle:
+                        if hotel_match_estricto(linea):
+                            lineas_a_reservar = [linea]
+                            break  # solo el primero
+
+                for linea in lineas_a_reservar:
+                    print(f"      ↪ Reserva solicitada para día {d['dia']} de {d['mes']}")
+                    ok = intentar_reserva(page, context, linea, debug)
+                    if ok:
+                        print("      ✓ Reserva completada")
+                    else:
+                        print("      ✗ Reserva fallida")
+
+                    # Tras volver de la reserva, puede que la página original ya no
+                    # esté en el mismo estado. Intentamos volver al listado de días.
+                    try:
+                        # Si estamos en la misma página y sigue el listado, no hacemos nada.
+                        # Si no, rehacemos el flujo completo para el siguiente combo.
+                        if page.locator("#destination-accreditation").first.is_visible(timeout=1500):
+                            pass  # seguimos bien
+                        else:
+                            print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
+                            # No hacemos nada aquí: el siguiente comprobar_combo lo detectará
+                            return dias_todos
+                    except Exception:
+                        pass
 
         return dias_todos
     except Exception as e:
@@ -663,7 +799,12 @@ def comprobar(debug=False, solo=None):
     print("→ Lanzando Chromium…")
     print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
     if PROBAR_EMAIL_SIN_FILTRO:
-        print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → se enviará email aunque no haya hoteles objetivo")
+        print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
+    if HACER_RESERVA:
+        print("⚠️  HACER_RESERVA = True → se intentará reservar")
+        if PROBAR_RESERVA_SIN_FILTRO:
+            print("⚠️  PROBAR_RESERVA_SIN_FILTRO = True → reserva con cualquier hotel")
+
     with sync_playwright() as pw:
         try:
             browser = pw.chromium.launch(headless=True, slow_mo=0)
@@ -697,7 +838,7 @@ def comprobar(debug=False, solo=None):
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
                 print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro: {descripcion_filtro(dest)}")
-                dias = comprobar_combo(page, dest, prov, debug, primera=(i == 1))
+                dias = comprobar_combo(page, context, dest, prov, debug, primera=(i == 1))
 
                 if not dias:
                     print("      · sin días")
@@ -725,6 +866,8 @@ def comprobar(debug=False, solo=None):
                 "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
                 "hoteles_objetivo": HOTELES_OBJETIVO,
                 "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
+                "hacer_reserva": HACER_RESERVA,
+                "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
                 "combos_comprobados": [
                     {"destino": d, "provincia": p, "filtro": _filtro_serializable(d)}
                     for d, p in combos
