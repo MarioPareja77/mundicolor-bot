@@ -24,6 +24,16 @@ jobs:
           pip install playwright
           playwright install --with-deps chromium
 
+      - name: Verificar qué versión se va a ejecutar
+        run: |
+          echo "===== Último commit ====="
+          git log -1 --oneline
+          echo "===== Línea de headless ====="
+          grep -n "headless" mundicolor_disponibilidad.py || echo "(no hay línea headless)"
+          echo "===== Todas las llamadas a chromium.launch ====="
+          grep -n "chromium.launch" mundicolor_disponibilidad.py
+          echo "===== Lista de archivos .py en el repo ====="
+          ls -la *.py
       - name: Ejecutar script
         env:
           SMTP_USER: "marioparejanieto@gmail.com"
