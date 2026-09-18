@@ -660,7 +660,7 @@ def comprobar(debug=False, solo=None):
     print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
     with sync_playwright() as pw:
         try:
-            browser = pw.chromium.launch(headless=False, slow_mo=150 if debug else 0)
+           browser = pw.chromium.launch(headless=True, slow_mo=0)
         except Exception as e:
             print(f"[FATAL] No se pudo abrir Chromium: {e}", file=sys.stderr)
             return None
