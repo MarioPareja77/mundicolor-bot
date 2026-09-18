@@ -6,9 +6,8 @@ Comprueba la disponibilidad en https://www.mundicolor.es/availability
 - EMAIL: solo se envía si algún día tiene un hotel de HOTELES_OBJETIVO.
 - RESERVA: si HACER_RESERVA=True, al detectar un hotel (objetivo o cualquiera
            si PROBAR_RESERVA_SIN_FILTRO=True) pulsa SELECCIONAR, marca
-           checkboxes y pulsa FINALIZAR RESERVA.
-
-Solo CONSULTA: no reserva nada.
+           checkboxes y pulsa FINALIZAR RESERVA. Solo para días que cumplan
+           FILTRO_RESERVA_POR_DESTINO.
 
 Uso:
     python mundicolor_disponibilidad.py                     # una pasada
@@ -74,21 +73,31 @@ PROBAR_EMAIL_SIN_FILTRO = True
 
 # === RESERVA ===
 HACER_RESERVA = True
-PROBAR_RESERVA_SIN_FILTRO = True   # True: prueba con cualquier hotel (el primero de cada día)
+PROBAR_RESERVA_SIN_FILTRO = True
 # ---------------------------------------------------------------------
 
-# ----------------- FILTRO TEMPORAL POR DESTINO -----------------------
+# ------------- FILTRO TEMPORAL PARA MOSTRAR / EMAIL ------------------
+# BALEARES: 2027, meses 3-10  ·  CANARIAS: sin filtro (cualquier mes)
 FILTRO_POR_DESTINO = {
     "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6, 7, 8, 9, 10}},
     "CANARIAS": None,
 }
+
+# ------------- FILTRO TEMPORAL SOLO PARA RESERVAR --------------------
+# BALEARES: solo abril 2027
+# CANARIAS: marzo, abril, mayo, junio, octubre, noviembre 2027
+FILTRO_RESERVA_POR_DESTINO = {
+    "BALEARES": {"anio": 2027, "meses": {4}},
+    "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
+}
+# ---------------------------------------------------------------------
+
 MESES_ES = {
     "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
     "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
     "septiembre": 9, "setiembre": 9, "octubre": 10,
     "noviembre": 11, "diciembre": 12,
 }
-# ---------------------------------------------------------------------
 
 # ----------------------------- EMAIL ---------------------------------
 SMTP_HOST = "smtp.gmail.com"
@@ -143,7 +152,6 @@ def hotel_match(linea):
 
 
 def hotel_match_estricto(linea):
-    """Igual que hotel_match pero SIN modo prueba. Para decidir si reservar."""
     n = normalizar(linea)
     if not n:
         return None
@@ -151,6 +159,20 @@ def hotel_match_estricto(linea):
         if re.search(r"(?<![a-z])" + re.escape(h_norm) + r"(?![a-z])", n):
             return h_orig
     return None
+
+
+def debe_reservar(destino, mes_str):
+    """
+    Devuelve True si el día (destino + mes/año) cumple FILTRO_RESERVA_POR_DESTINO.
+    """
+    f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
+    if f is None:
+        return False  # sin regla definida → no reservar
+    ma = mes_anio(mes_str)
+    if not ma:
+        return False
+    anio, mes = ma
+    return anio == f["anio"] and mes in f["meses"]
 
 
 # ---------------------------------------------------------------------
@@ -505,6 +527,13 @@ def descripcion_filtro(destino):
     return f"{f['anio']} (meses {sorted(f['meses'])})"
 
 
+def descripcion_filtro_reserva(destino):
+    f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
+    if f is None:
+        return "sin reserva"
+    return f"{f['anio']} (meses {sorted(f['meses'])})"
+
+
 def detalle_dia(page, idx):
     page.locator(f'[data-libre="{idx}"]').first.click()
     page.wait_for_timeout(1800)
@@ -517,24 +546,16 @@ def detalle_dia(page, idx):
 
 
 # ---------------------------------------------------------------------
-# RESERVA (SELECCIONAR → nueva pestaña → checkboxes → FINALIZAR RESERVA)
+# RESERVA
 # ---------------------------------------------------------------------
 def intentar_reserva(page, context, linea_hotel, debug=False):
-    """
-    Dada una línea de resultado (con €), localiza su fila, pulsa SELECCIONAR,
-    gestiona la nueva pestaña, marca las checkboxes y pulsa FINALIZAR RESERVA.
-    """
     print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
 
     try:
-        # 1) Localizar la fila que contiene esa línea.
-        #    Probamos con el nombre del hotel (más específico que toda la línea).
-        #    Encontramos el primer token "significativo" del hotel: la parte antes del "|"
         partes = [p.strip() for p in linea_hotel.split("|")]
         nombre_hotel = partes[1] if len(partes) > 1 else partes[0]
         print(f"      (nombre a buscar: '{nombre_hotel}')")
 
-        # Buscar el <tr> / <li> / <div> que contiene ese nombre
         fila = None
         for sel in ["tr", "li", "div"]:
             loc = page.locator(sel).filter(has_text=re.compile(re.escape(nombre_hotel), re.I))
@@ -546,7 +567,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
             print("      ✗ No encuentro la fila del hotel")
             return False
 
-        # 2) Buscar botón SELECCIONAR dentro de la fila
         btn_sel = fila.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
         ).filter(has_text=re.compile(r"seleccionar", re.I)).first
@@ -560,7 +580,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
                 shot(page, "04_sin_boton_seleccionar", debug)
             return False
 
-        # 3) Pulsar SELECCIONAR y capturar nueva pestaña o navegación
         print("      → Pulsando SELECCIONAR...")
         try:
             with context.expect_page(timeout=8000) as nueva_info:
@@ -578,7 +597,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if debug:
             shot(nueva, "04_pagina_reserva", debug)
 
-        # 4) Marcar checkboxes visibles
         checkboxes = nueva.locator("input[type='checkbox']")
         n = checkboxes.count()
         print(f"      Checkboxes encontradas: {n}")
@@ -597,7 +615,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if debug:
             shot(nueva, "05_checkboxes_marcadas", debug)
 
-        # 5) Pulsar FINALIZAR RESERVA
         print("      → Buscando FINALIZAR RESERVA...")
         btn_final = nueva.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
@@ -620,7 +637,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if debug:
             shot(nueva, "06_finalizado", debug)
 
-        # 6) Cerrar pestaña nueva si la había
         if usa_nueva_pestana:
             try:
                 nueva.close()
@@ -687,37 +703,38 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 
             # ==== RESERVA ====
             if HACER_RESERVA:
-                # Determinar qué líneas gatillan reserva
+                # 1) ¿Este día (destino + mes) cumple el filtro de reserva?
+                if not debe_reservar(destino, d.get("mes", "")):
+                    if debug:
+                        print(f"      · Reserva NO: día {d['dia']} de {d['mes']} no cumple filtro "
+                              f"({descripcion_filtro_reserva(destino)})")
+                    continue
+
+                # 2) ¿Qué línea reservar?
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
-                    # En modo prueba: el PRIMER hotel con € de cada día
                     if detalle:
                         lineas_a_reservar = [detalle[0]]
                 else:
-                    # Solo hoteles objetivo (estricto)
                     for linea in detalle:
                         if hotel_match_estricto(linea):
                             lineas_a_reservar = [linea]
-                            break  # solo el primero
+                            break
+
+                if not lineas_a_reservar:
+                    if debug:
+                        print(f"      · Reserva NO: día {d['dia']} sin hotel que cumpla")
+                    continue
 
                 for linea in lineas_a_reservar:
-                    print(f"      ↪ Reserva solicitada para día {d['dia']} de {d['mes']}")
+                    print(f"      ↪ Reserva solicitada para día {d['dia']} de {d['mes']} "
+                          f"({destino}, filtro {descripcion_filtro_reserva(destino)})")
                     ok = intentar_reserva(page, context, linea, debug)
-                    if ok:
-                        print("      ✓ Reserva completada")
-                    else:
-                        print("      ✗ Reserva fallida")
+                    print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
 
-                    # Tras volver de la reserva, puede que la página original ya no
-                    # esté en el mismo estado. Intentamos volver al listado de días.
                     try:
-                        # Si estamos en la misma página y sigue el listado, no hacemos nada.
-                        # Si no, rehacemos el flujo completo para el siguiente combo.
-                        if page.locator("#destination-accreditation").first.is_visible(timeout=1500):
-                            pass  # seguimos bien
-                        else:
+                        if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
                             print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
-                            # No hacemos nada aquí: el siguiente comprobar_combo lo detectará
                             return dias_todos
                     except Exception:
                         pass
@@ -798,6 +815,9 @@ def comprobar(debug=False, solo=None):
 
     print("→ Lanzando Chromium…")
     print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
+    print("→ Filtro RESERVA por destino:")
+    for dest in ("BALEARES", "CANARIAS"):
+        print(f"     {dest}: {descripcion_filtro_reserva(dest)}")
     if PROBAR_EMAIL_SIN_FILTRO:
         print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
     if HACER_RESERVA:
@@ -837,7 +857,8 @@ def comprobar(debug=False, solo=None):
             todos = []
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
-                print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro: {descripcion_filtro(dest)}")
+                print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro email: {descripcion_filtro(dest)}"
+                      f"  · filtro reserva: {descripcion_filtro_reserva(dest)}")
                 dias = comprobar_combo(page, context, dest, prov, debug, primera=(i == 1))
 
                 if not dias:
@@ -856,8 +877,7 @@ def comprobar(debug=False, solo=None):
                 todos.extend(dias)
                 todos_objetivo.extend([d for d in dias if d.get("es_objetivo")])
 
-            def _filtro_serializable(dest):
-                f = FILTRO_POR_DESTINO.get(dest.upper())
+            def _filtro_serializable(f):
                 if f is None:
                     return None
                 return {"anio": f["anio"], "meses": sorted(f["meses"])}
@@ -868,8 +888,13 @@ def comprobar(debug=False, solo=None):
                 "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                 "hacer_reserva": HACER_RESERVA,
                 "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
+                "filtro_reserva_por_destino": {
+                    k: _filtro_serializable(v) for k, v in FILTRO_RESERVA_POR_DESTINO.items()
+                },
                 "combos_comprobados": [
-                    {"destino": d, "provincia": p, "filtro": _filtro_serializable(d)}
+                    {"destino": d, "provincia": p,
+                     "filtro_email": _filtro_serializable(FILTRO_POR_DESTINO.get(d.upper())),
+                     "filtro_reserva": _filtro_serializable(FILTRO_RESERVA_POR_DESTINO.get(d.upper()))}
                     for d, p in combos
                 ],
                 "disponibles": todos,
