@@ -3,8 +3,9 @@ Comprueba la disponibilidad en https://www.mundicolor.es/availability
 (Imserso / Mundicolor) para los destinos/provincias configurados.
 
 - LOG en consola: muestra TODOS los días disponibles de cada combo.
-- EMAIL: solo se envía si algún día tiene un hotel de HOTELES_OBJETIVO,
-         y en el cuerpo solo se listan las líneas de esos hoteles objetivo.
+- EMAIL: solo se envía si algún día tiene un hotel de HOTELES_OBJETIVO.
+         Con PROBAR_EMAIL_SIN_FILTRO = True se envía email aunque no haya
+         hoteles objetivo (modo prueba para verificar el envío).
 
 Solo CONSULTA: no reserva nada.
 
@@ -20,6 +21,7 @@ Uso:
 """
 import argparse
 import json
+import os
 import re
 import smtplib
 import sys
@@ -70,6 +72,10 @@ HOTELES_OBJETIVO = [
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
 ]
+
+# === MODO PRUEBA: enviar email aunque no haya hoteles objetivo ===
+# Ponlo a True para probar el envío, y vuelve a False cuando confirmes que llega.
+PROBAR_EMAIL_SIN_FILTRO = True
 # ---------------------------------------------------------------------
 
 # ----------------- FILTRO TEMPORAL POR DESTINO -----------------------
@@ -88,9 +94,9 @@ MESES_ES = {
 # ----------------------------- EMAIL ---------------------------------
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
-SMTP_USER = "marioparejanieto@gmail.com"
-SMTP_PASS = "wnfx ldkt oomn yqoi"
-EMAIL_DESTINO = "marioparejanieto@gmail.com"
+SMTP_USER     = os.environ.get("SMTP_USER", "marioparejanieto@gmail.com")
+SMTP_PASS     = os.environ.get("SMTP_PASS", "wnfx ldkt oomn yqoi")
+EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "marioparejanieto@gmail.com")
 EMAIL_SOLO_SI_HAY = True
 # ---------------------------------------------------------------------
 
@@ -127,9 +133,11 @@ HOTELES_OBJETIVO_NORM = [normalizar(h) for h in HOTELES_OBJETIVO]
 
 def hotel_match(linea):
     """
-    Devuelve el nombre original del hotel de la lista que aparece en `linea`,
-    o None si no hay match. Comparación: minúsculas, sin acentos, palabra completa.
+    Devuelve el nombre del hotel de la lista que aparece en `linea`,
+    o None si no hay match.
     """
+    if PROBAR_EMAIL_SIN_FILTRO:
+        return "PRUEBA"          # ← cualquier línea "matchea" en modo prueba
     n = normalizar(linea)
     if not n:
         return None
@@ -571,7 +579,7 @@ def comprobar_combo(page, destino, provincia, debug, primera=False):
                 h = hotel_match(linea)
                 if h:
                     hoteles_encontrados.add(h)
-            d["detalle"] = detalle   # TODAS las líneas (para el log y el JSON)
+            d["detalle"] = detalle
             d["destino"] = destino
             d["provincia"] = provincia
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
@@ -612,15 +620,12 @@ def enviar_email(asunto, cuerpo, debug=False):
 
 
 def construir_cuerpo(res):
-    """
-    El email SOLO muestra:
-      - Los días que tienen al menos un hotel objetivo.
-      - Dentro de cada día, SOLO las líneas con hoteles objetivo (opción A).
-    """
     lineas = []
     lineas.append(f"Consulta: {res['fecha_consulta']}")
     objetivos = res.get("disponibles_objetivo", [])
     lineas.append(f"Total días con hoteles objetivo: {len(objetivos)}")
+    if PROBAR_EMAIL_SIN_FILTRO:
+        lineas.append("(MODO PRUEBA: se han aceptado TODOS los hoteles, no solo los objetivo)")
     lineas.append("")
 
     zonas = {}
@@ -637,7 +642,6 @@ def construir_cuerpo(res):
         for d in dias:
             hoteles = ", ".join(d.get("hoteles_objetivo", []))
             lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
-            # Opción A: solo líneas con hotel objetivo
             for l in d["detalle"]:
                 if hotel_match(l):
                     lineas.append(f"      {l}")
@@ -658,9 +662,11 @@ def comprobar(debug=False, solo=None):
 
     print("→ Lanzando Chromium…")
     print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
+    if PROBAR_EMAIL_SIN_FILTRO:
+        print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → se enviará email aunque no haya hoteles objetivo")
     with sync_playwright() as pw:
         try:
-           browser = pw.chromium.launch(headless=True, slow_mo=0)
+            browser = pw.chromium.launch(headless=True, slow_mo=0)
         except Exception as e:
             print(f"[FATAL] No se pudo abrir Chromium: {e}", file=sys.stderr)
             return None
@@ -687,8 +693,8 @@ def comprobar(debug=False, solo=None):
         page = context.new_page()
         try:
             print(f"\n→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
-            todos = []            # TODOS los días (para el log y el JSON)
-            todos_objetivo = []   # Solo días con hotel objetivo (para el email)
+            todos = []
+            todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
                 print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro: {descripcion_filtro(dest)}")
                 dias = comprobar_combo(page, dest, prov, debug, primera=(i == 1))
@@ -696,14 +702,12 @@ def comprobar(debug=False, solo=None):
                 if not dias:
                     print("      · sin días")
                 else:
-                    # LOG: mostrar TODOS los días, marcando cuáles son objetivo
                     for d in dias:
                         hoteles = d.get("hoteles_objetivo", [])
                         if hoteles:
                             print(f"      🟢 Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
                         else:
                             print(f"      ⚪ Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
-                        # detalle completo en el log (para tranquilidad del usuario)
                         for l in d["detalle"]:
                             prefijo = "          · " if not hotel_match(l) else "          ★ "
                             print(f"{prefijo}{l}")
@@ -720,12 +724,13 @@ def comprobar(debug=False, solo=None):
             resultado = {
                 "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
                 "hoteles_objetivo": HOTELES_OBJETIVO,
+                "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                 "combos_comprobados": [
                     {"destino": d, "provincia": p, "filtro": _filtro_serializable(d)}
                     for d, p in combos
                 ],
-                "disponibles": todos,                 # todos (log/JSON)
-                "disponibles_objetivo": todos_objetivo,  # solo objetivo (email)
+                "disponibles": todos,
+                "disponibles_objetivo": todos_objetivo,
             }
             (OUT_DIR / "ultimo_resultado.json").write_text(
                 json.dumps(resultado, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -759,6 +764,8 @@ def mostrar(res, debug=False):
 
     print(f"\n→ ¡HAY {n_obj} día(s) con hoteles objetivo! Enviando email…")
     asunto = f"🟢 Mundicolor: {n_obj} día(s) con hoteles objetivo"
+    if PROBAR_EMAIL_SIN_FILTRO:
+        asunto = f"🧪 [PRUEBA] Mundicolor: {n_obj} día(s) disponibles"
     enviar_email(asunto, construir_cuerpo(res), debug=debug)
 
 
