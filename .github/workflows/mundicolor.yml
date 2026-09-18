@@ -1,0 +1,32 @@
+name: Mundicolor Disponibilidad
+
+on:
+  schedule:
+    # Cada 5 minutos. OJO: GitHub puede retrasarlo unos minutos.
+    - cron: '*/5 * * * *'
+  workflow_dispatch:      # Permite lanzarlo a mano desde la pestaña "Actions"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias y Chromium
+        run: |
+          pip install playwright
+          playwright install --with-deps chromium
+
+      - name: Ejecutar script
+        env:
+          SMTP_USER: "marioparejanieto@gmail.com"
+          SMTP_PASS: "wnfx ldkt oomn yqoi"
+          EMAIL_DESTINO: "marioparejanieto@gmail.com"
+        run: python mundicolor_disponibilidad.py
