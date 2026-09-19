@@ -89,14 +89,14 @@ FILTRO_POR_DESTINO = {
 #   → MALLORCA: solo abril 2027
 # CANARIAS: marzo, abril, mayo, junio, octubre, noviembre 2027
 FILTRO_RESERVA_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {3, 4}},
+    "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6}},
     "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
 }
 
 # Overrides por (destino, provincia). Si existe, sustituye al filtro del destino.
 FILTRO_RESERVA_POR_PROVINCIA = {
-    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {4}},
-    ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {3, 4}},
+    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {4, 5, 6}},
+    ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {4, 5, 6}},
 }
 # ---------------------------------------------------------------------
 
