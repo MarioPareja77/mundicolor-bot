@@ -56,16 +56,17 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Alicante",
     "Almería",
     "Cadiz",
-    "Gran Canaria",
-    "Granada",
+    "Gran Canaria",          # ← no está en el <select> de TS → se omite
+    "Granada",               # ← ídem
     "Huelva",
-    "I. Mallorca",
-    "Madrid",
+    "I. Mallorca",           # ← ídem
+    "Madrid",                # ← ídem
     "Málaga",
     "Murcia",
-    "Santa Cruz de Tenerife",
+    "Santa Cruz de Tenerife",# ← ídem
 ]
 MESES_TURISMOSOCIAL = {3, 4, 5, 6}
+MAX_FALLOS_CONSECUTIVOS_TS = 3   # si fallan 3 seguidos, se aborta TurismoSocial
 # ---------------------------------------------------------------------
 
 # ----------------- HOTELES OBJETIVO (whitelist) ----------------------
@@ -133,40 +134,24 @@ def shot(page, name, debug):
 
 
 # ---------------------------------------------------------------------
-# MODALES DE ERROR/AVISO (Mundicolor y TurismoSocial)
+# MODALES
 # ---------------------------------------------------------------------
 MODALES_SEL = [
-    "#modalMessageError",
-    "#modalMessageInfo",
-    "#modalMessageWarning",
-    "#modalMessageSuccess",
-    ".modal-error",
-    ".modal.in",
-    ".modal.show",
+    "#modalMessageError", "#modalMessageInfo", "#modalMessageWarning",
+    "#modalMessageSuccess", ".modal-error", ".modal.in", ".modal.show",
     '[role="dialog"]',
 ]
-
 BOTONES_CERRAR_MODAL = [
-    "button.close",
-    "button[data-dismiss='modal']",
-    "[aria-label='Close']",
-    "[aria-label='Cerrar']",
-    "button:has-text('Aceptar')",
-    "button:has-text('Cerrar')",
-    "button:has-text('OK')",
-    "button:has-text('Ok')",
-    "button:has-text('Entendido')",
-    "button:has-text('Continuar')",
-    ".modal-footer button",
-    ".modal-footer .btn",
+    "button.close", "button[data-dismiss='modal']",
+    "[aria-label='Close']", "[aria-label='Cerrar']",
+    "button:has-text('Aceptar')", "button:has-text('Cerrar')",
+    "button:has-text('OK')", "button:has-text('Ok')",
+    "button:has-text('Entendido')", "button:has-text('Continuar')",
+    ".modal-footer button", ".modal-footer .btn",
 ]
 
 
 def _cerrar_modales(page, debug=False, max_iter=5):
-    """
-    Cierra cualquier modal visible de error/aviso que intercepte clics.
-    Devuelve True si cerró al menos uno. Con --debug imprime el texto del modal.
-    """
     cerrado_alguno = False
     for _ in range(max_iter):
         cerrado = False
@@ -180,15 +165,12 @@ def _cerrar_modales(page, debug=False, max_iter=5):
                         continue
                 except Exception:
                     continue
-
                 if debug:
                     try:
                         txt = modal.inner_text().strip().replace("\n", " ")[:180]
                         print(f"      [modal] {sel_modal}: {txt!r}")
                     except Exception:
                         pass
-
-                # Intentar cerrar por botón
                 pulsado = False
                 for btn_sel in BOTONES_CERRAR_MODAL:
                     try:
@@ -200,8 +182,6 @@ def _cerrar_modales(page, debug=False, max_iter=5):
                             break
                     except Exception:
                         continue
-
-                # Fallback: ESC + quitar backdrop a mano
                 if not pulsado:
                     try:
                         page.keyboard.press("Escape")
@@ -209,9 +189,7 @@ def _cerrar_modales(page, debug=False, max_iter=5):
                         pulsado = True
                     except Exception:
                         pass
-
                 if pulsado:
-                    # A veces el backdrop .modal-backdrop se queda "pegado"
                     try:
                         page.evaluate("""() => {
                             document.querySelectorAll('.modal-backdrop').forEach(e => e.remove());
@@ -225,7 +203,6 @@ def _cerrar_modales(page, debug=False, max_iter=5):
                     cerrado_alguno = True
             except Exception:
                 continue
-
         if not cerrado:
             break
     return cerrado_alguno
@@ -248,7 +225,6 @@ def _dump_debug(page, name):
             print(f"      [debug] PNG guardado en {base}.png")
         except Exception:
             pass
-
         for fi, frame in enumerate(page.frames):
             try:
                 info = frame.evaluate("""() => [...document.querySelectorAll('select')].map(s => ({
@@ -343,8 +319,6 @@ def cookies(page, debug=False):
 
     page.wait_for_timeout(800)
     if not banner_visible():
-        if debug:
-            print("      [cookies] sin banner (ya aceptado)")
         return True
 
     exito = False
@@ -469,7 +443,7 @@ def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
 
 
 # ---------------------------------------------------------------------
-# SELECTS (helpers básicos)
+# SELECTS
 # ---------------------------------------------------------------------
 def opciones_de(page, selector):
     return page.locator(selector).first.evaluate("e => [...e.options].map(o => o.text.trim())")
@@ -486,13 +460,11 @@ def opciones_validas(page, selector):
 
 def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
     _cerrar_modales(page, debug=debug)
-
     ctl = page.locator(selector).first
     if ctl.count() == 0:
         if obligatorio:
             raise RuntimeError(f"No encuentro el <select> {selector}")
         return False
-
     tag = ctl.evaluate("e => e.tagName")
     if tag != "SELECT":
         ctl.click()
@@ -505,7 +477,6 @@ def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
             if obligatorio:
                 raise
             return False
-
     textos = opciones_de(page, selector)
     rx = re.compile(rf"^\s*{re.escape(opcion)}\s*$", re.I)
     for t in textos:
@@ -515,12 +486,9 @@ def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
             if debug:
                 print(f"      ✓ {selector} = '{t}'")
             return True
-
     msg = f"'{opcion}' no está en {selector}: {textos}"
     if obligatorio:
         raise RuntimeError(msg)
-    if debug:
-        print(f"      (aviso) {msg}")
     return False
 
 
@@ -537,7 +505,7 @@ def esperar_opciones(page, selector, timeout_ms=8000):
 
 
 # ---------------------------------------------------------------------
-# SELECTS robustos: buscar por contenido de las opciones (para TS)
+# SELECTS por contenido
 # ---------------------------------------------------------------------
 def _iter_selects(page):
     for frame in page.frames:
@@ -549,8 +517,29 @@ def _iter_selects(page):
             yield frame, frame.locator("select").nth(i), i
 
 
-def encontrar_select_por_opcion(page, opcion,
-                                regex_fallback=None, timeout_ms=10000):
+def _listar_opciones_select(page, selector_por_id):
+    """Devuelve la lista de <option> del select con el id dado."""
+    try:
+        return page.locator(selector_por_id).first.evaluate(
+            "e => [...e.options].map(o => o.text.trim())")
+    except Exception:
+        return []
+
+
+def _opcion_disponible(page, selector_por_id, texto, regex_flex=None):
+    """True si `texto` (o regex_flex) existe en las opciones del select dado."""
+    opts = _listar_opciones_select(page, selector_por_id)
+    for o in opts:
+        if o.strip().lower() == texto.strip().lower():
+            return True
+    if regex_flex:
+        for o in opts:
+            if re.search(regex_flex, o, re.I):
+                return True
+    return False
+
+
+def encontrar_select_por_opcion(page, opcion, regex_fallback=None, timeout_ms=10000):
     rx_exact = re.compile(rf"^\s*{re.escape(opcion)}\s*$", re.I)
     t0 = time.time()
     while (time.time() - t0) * 1000 < timeout_ms:
@@ -575,12 +564,10 @@ def encontrar_select_por_opcion(page, opcion,
 def elegir_por_contenido(page, opcion, etiqueta,
                          obligatorio=True, debug=False, regex_fallback=None):
     _cerrar_modales(page, debug=debug)
-
     sel, texto = encontrar_select_por_opcion(
         page, opcion, regex_fallback=regex_fallback, timeout_ms=10000)
     if sel is None:
         if obligatorio:
-            print(f"      ✗ No encuentro ningún <select> con opción '{opcion}' ({etiqueta})")
             _dump_debug(page, f"no_select_{etiqueta}")
             raise RuntimeError(
                 f"No encuentro ningún <select> con la opción '{opcion}' ({etiqueta})")
@@ -599,7 +586,7 @@ def elegir_por_contenido(page, opcion, etiqueta,
 
 
 # ---------------------------------------------------------------------
-# BOTÓN BUSCAR flexible (para TS)
+# BOTÓN BUSCAR
 # ---------------------------------------------------------------------
 CAND_BUSCAR_TS = ["#product-searcher-btn-accreditation", "#product-searcher-btn",
                   'button:has-text("Buscar")', 'button:has-text("Consultar")',
@@ -609,7 +596,6 @@ CAND_BUSCAR_TS = ["#product-searcher-btn-accreditation", "#product-searcher-btn"
 
 def _pulsar_buscar_flexible(page, debug=False):
     _cerrar_modales(page, debug=debug)
-
     for sel in CAND_BUSCAR_TS:
         try:
             btn = page.locator(sel).first
@@ -671,7 +657,6 @@ FALLBACK_CLAVE = ["input#addPaxPasswordIpt", 'input[type="password"]', 'input[na
 
 def _login_pasajeros(page, debug=False):
     _cerrar_modales(page, debug=debug)
-
     try:
         page.locator("#addPaxIpt").first.wait_for(state="visible", timeout=15000)
     except Exception:
@@ -699,7 +684,6 @@ def _desmarcar_mascotas(page):
 
 def _pulsar_buscar(page):
     _cerrar_modales(page)
-
     try:
         btn = page.locator("#product-searcher-btn-accreditation")
         try:
@@ -722,13 +706,11 @@ def _pulsar_buscar(page):
     _cerrar_modales(page)
 
 
-# ------------------ MUNDICOLOR: aplicar combos ----------------------
+# ------------------ MUNDICOLOR ------------------
 def aplicar_destino_provincia_y_buscar(page, destino, provincia, debug):
     _cerrar_modales(page, debug=debug)
-
     elegir_select(page, "#destination-accreditation", destino, obligatorio=True, debug=debug)
     esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
-
     if provincia:
         elegir_select(page, "#province-accreditation", provincia, obligatorio=True, debug=debug)
         esperar_opciones(page, "#town-accreditation", timeout_ms=5000)
@@ -736,12 +718,10 @@ def aplicar_destino_provincia_y_buscar(page, destino, provincia, debug):
             elegir_select(page, "#town-accreditation", LOCALIDAD, obligatorio=False, debug=False)
         except Exception:
             pass
-
     try:
         elegir_select(page, "#stay-accreditation", NUM_DIAS, obligatorio=False, debug=False)
     except Exception:
         pass
-
     _pulsar_buscar(page)
 
 
@@ -749,40 +729,47 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
     print("   → Abriendo Mundicolor…")
     page.goto(URL_MUNDICOLOR, wait_until="networkidle")
     page.wait_for_timeout(1500)
-
     cookies(page, debug=debug)
     esperar_captcha(page, debug=debug)
     cookies(page, debug=debug)
     _cerrar_modales(page, debug=debug)
-
     if con_login:
         _login_pasajeros(page, debug)
-
     _desmarcar_mascotas(page)
-
     print(f"      Transporte = '{TRANSPORTE}'")
     elegir_select(page, "#transport-accreditation", TRANSPORTE, obligatorio=True, debug=debug)
-
     try:
         elegir_select(page, "#origin-accreditation", ORIGEN, obligatorio=False, debug=debug)
     except Exception:
         pass
-
     aplicar_destino_provincia_y_buscar(page, destino, provincia, debug)
 
 
-# ------------- TURISMOSOCIAL: flujo y combos -------------------------
+# ------------- TURISMOSOCIAL -------------
 def _regex_flexible_tildes(s):
     subs = {"a": "[aá]", "e": "[eé]", "i": "[ií]", "o": "[oó]", "u": "[uú]",
             "A": "[aáAÁ]", "E": "[eéEÉ]", "I": "[iíIÍ]", "O": "[oóOÓ]", "U": "[uúUÚ]"}
     return "".join(subs.get(c, re.escape(c)) for c in s)
 
 
+def _esperar_formulario_ts(page, timeout_s=10, debug=False):
+    """Espera a que #transport-accreditation aparezca visible."""
+    t0 = time.time()
+    while (time.time() - t0) < timeout_s:
+        _cerrar_modales(page, debug=debug)
+        try:
+            if page.locator("#transport-accreditation").count() > 0:
+                return True
+        except Exception:
+            pass
+        page.wait_for_timeout(400)
+    return False
+
+
 def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
     print("   → Abriendo TurismoSocial…")
     page.goto(URL_TURISMOSOCIAL, wait_until="networkidle")
     page.wait_for_timeout(2000)
-
     cookies(page, debug=debug)
     esperar_captcha(page, debug=debug)
     cookies(page, debug=debug)
@@ -790,20 +777,12 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     if con_login:
         _login_pasajeros(page, debug)
-
     _desmarcar_mascotas(page)
 
-    print("      Esperando a que cargue el formulario…")
-    t0 = time.time()
-    while (time.time() - t0) < 15:
-        try:
-            n_vis = page.locator("select:visible").count()
-        except Exception:
-            n_vis = 0
-        if n_vis > 0:
-            break
-        _cerrar_modales(page, debug=debug)
-        page.wait_for_timeout(500)
+    if not _esperar_formulario_ts(page, timeout_s=15, debug=debug):
+        print("      ✗ Formulario TS no aparece tras 15s.")
+        _dump_debug(page, "ts_form_no_aparece")
+        return False
 
     if debug:
         print("      [debug] <select> presentes ahora:")
@@ -817,53 +796,42 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     print(f"      Transporte = '{TRANSPORTE}'")
     try:
-        ok = elegir_por_contenido(
-            page, TRANSPORTE, "Transporte",
-            obligatorio=True, debug=debug,
-            regex_fallback=r"sin\s+transporte")
-        if not ok:
-            raise RuntimeError("Transporte no encontrado")
+        elegir_por_contenido(page, TRANSPORTE, "Transporte",
+                             obligatorio=True, debug=debug,
+                             regex_fallback=r"sin\s+transporte")
     except Exception as e:
         print(f"      ✗ Transporte: {e}")
         return False
 
     try:
-        elegir_por_contenido(
-            page, ORIGEN, "Origen",
-            obligatorio=False, debug=False,
-            regex_fallback=r"selecciona")
+        elegir_por_contenido(page, ORIGEN, "Origen",
+                             obligatorio=False, debug=False, regex_fallback=r"selecciona")
     except Exception:
         pass
 
-    print(f"      Zona de destino = '{zona}'")
+    print(f"      Zona = '{zona}'")
     try:
-        regex_zona = None
-        if "Capitales" in zona:
-            regex_zona = r"capital(es)?\s+de\s+provincia"
-        elif "Costa" in zona:
-            regex_zona = r"costa"
-        ok = elegir_por_contenido(
-            page, zona, "ZonaDestino",
-            obligatorio=True, debug=debug,
-            regex_fallback=regex_zona)
-        if not ok:
-            raise RuntimeError("Zona no encontrada")
+        regex_zona = (r"capital(es)?\s+de\s+provincia" if "Capitales" in zona else r"costa")
+        elegir_por_contenido(page, zona, "ZonaDestino",
+                             obligatorio=True, debug=debug, regex_fallback=regex_zona)
     except Exception as e:
         print(f"      ✗ Zona '{zona}': {e}")
         return False
 
     page.wait_for_timeout(1500)
 
+    # ¿Está la provincia en el select?
+    base = provincia[3:] if provincia.startswith("I. ") else provincia
+    regex_prov = _regex_flexible_tildes(base)
+    if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
+        opts = _listar_opciones_select(page, "#province-accreditation")
+        print(f"      ⏭ Provincia '{provincia}' no está en el select de '{zona}'. Opciones: {opts}")
+        return False
+
     print(f"      Provincia = '{provincia}'")
     try:
-        base = provincia[3:] if provincia.startswith("I. ") else provincia
-        regex_prov = _regex_flexible_tildes(base)
-        ok = elegir_por_contenido(
-            page, provincia, "Provincia",
-            obligatorio=True, debug=debug,
-            regex_fallback=regex_prov)
-        if not ok:
-            raise RuntimeError("Provincia no encontrada")
+        elegir_por_contenido(page, provincia, "Provincia",
+                             obligatorio=True, debug=debug, regex_fallback=regex_prov)
     except Exception as e:
         print(f"      ✗ Provincia '{provincia}' en zona '{zona}': {e}")
         return False
@@ -935,7 +903,6 @@ def descripcion_filtro_reserva(destino, provincia=None):
 
 def detalle_dia(page, idx, debug=False):
     _cerrar_modales(page, debug=debug)
-
     loc = page.locator(f'[data-libre="{idx}"]').first
     try:
         loc.click(timeout=8000)
@@ -949,7 +916,6 @@ def detalle_dia(page, idx, debug=False):
             return []
     page.wait_for_timeout(1800)
     _cerrar_modales(page, debug=debug)
-
     lineas = [l.strip() for l in page.locator("body").inner_text().splitlines() if l.strip()]
     res = []
     for i, l in enumerate(lineas):
@@ -963,38 +929,30 @@ def detalle_dia(page, idx, debug=False):
 # ---------------------------------------------------------------------
 def intentar_reserva(page, context, linea_hotel, debug=False):
     _cerrar_modales(page, debug=debug)
-
     print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
-
     try:
         partes = [p.strip() for p in linea_hotel.split("|")]
         nombre_hotel = partes[1] if len(partes) > 1 else partes[0]
         print(f"      (nombre a buscar: '{nombre_hotel}')")
-
         fila = None
         for sel in ["tr", "li", "div"]:
             loc = page.locator(sel).filter(has_text=re.compile(re.escape(nombre_hotel), re.I))
             if loc.count() > 0:
                 fila = loc.last
                 break
-
         if not fila:
             print("      ✗ No encuentro la fila del hotel")
             return False
-
         btn_sel = fila.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
         ).filter(has_text=re.compile(r"seleccionar", re.I)).first
-
         if btn_sel.count() == 0:
             btn_sel = fila.get_by_role("button", name=re.compile(r"seleccionar", re.I)).first
-
         if btn_sel.count() == 0:
             print("      ✗ No encuentro botón SELECCIONAR en la fila")
             if debug:
                 shot(page, "04_sin_boton_seleccionar", debug)
             return False
-
         print("      → Pulsando SELECCIONAR...")
         _cerrar_modales(page, debug=debug)
         try:
@@ -1013,12 +971,10 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
             page.wait_for_load_state("networkidle", timeout=15000)
             nueva = page
             usa_nueva_pestana = False
-
         nueva.wait_for_timeout(2500)
         _cerrar_modales(nueva, debug=debug)
         if debug:
             shot(nueva, "04_pagina_reserva", debug)
-
         checkboxes = nueva.locator("input[type='checkbox']")
         n = checkboxes.count()
         print(f"      Checkboxes encontradas: {n}")
@@ -1032,17 +988,14 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
                     print(f"      ✓ Checkbox {i+1} marcada")
             except Exception as e:
                 print(f"      (checkbox {i+1} no marcada: {e})")
-
         nueva.wait_for_timeout(1000)
         _cerrar_modales(nueva, debug=debug)
         if debug:
             shot(nueva, "05_checkboxes_marcadas", debug)
-
         print("      → Buscando FINALIZAR RESERVA...")
         btn_final = nueva.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
         ).filter(has_text=re.compile(r"finalizar\s+reserva", re.I)).first
-
         if btn_final.count() == 0:
             print("      ✗ No encuentro botón FINALIZAR RESERVA")
             if debug:
@@ -1053,7 +1006,6 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
                 except Exception:
                     pass
             return False
-
         try:
             btn_final.click(timeout=5000)
         except PWTimeout:
@@ -1063,13 +1015,11 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         nueva.wait_for_timeout(3000)
         if debug:
             shot(nueva, "06_finalizado", debug)
-
         if usa_nueva_pestana:
             try:
                 nueva.close()
             except Exception:
                 pass
-
         return True
     except Exception as e:
         print(f"      [RESERVA ERROR] {e}")
@@ -1082,12 +1032,11 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
 
 
 # ---------------------------------------------------------------------
-# MUNDICOLOR: una pasada de un combo
+# MUNDICOLOR: combo
 # ---------------------------------------------------------------------
 def comprobar_combo(page, context, destino, provincia, debug, primera=False):
     try:
         _cerrar_modales(page, debug=debug)
-
         if primera:
             flujo_completo(page, destino, provincia, debug, con_login=True)
         else:
@@ -1095,18 +1044,14 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                 form_ok = page.locator("#destination-accreditation").first.is_visible(timeout=2000)
             except Exception:
                 form_ok = False
-
             if form_ok:
                 print("      (formulario ya cargado: solo cambio destino/provincia y BUSCAR)")
                 aplicar_destino_provincia_y_buscar(page, destino, provincia, debug)
             else:
                 print("      (no veo el formulario, hago flujo completo)")
                 flujo_completo(page, destino, provincia, debug, con_login=False)
-
         _cerrar_modales(page, debug=debug)
-
         dias = page.evaluate(JS_DIAS_VERDES)
-
         filtro = FILTRO_POR_DESTINO.get(destino.upper())
         dias_temporal_ok = []
         for d in dias:
@@ -1116,7 +1061,6 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                 ma = mes_anio(d.get("mes", ""))
                 if ma and ma[0] == filtro["anio"] and ma[1] in filtro["meses"]:
                     dias_temporal_ok.append(d)
-
         dias_todos = []
         for d in dias_temporal_ok:
             detalle = detalle_dia(page, d["idx"], debug=debug)
@@ -1131,14 +1075,9 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
-
             if HACER_RESERVA:
                 if not debe_reservar(destino, provincia, d.get("mes", "")):
-                    if debug:
-                        print(f"      · Reserva NO: día {d['dia']} de {d['mes']} no cumple filtro "
-                              f"({descripcion_filtro_reserva(destino, provincia)})")
                     continue
-
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
                     if detalle:
@@ -1148,25 +1087,18 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                         if hotel_match_estricto(linea):
                             lineas_a_reservar = [linea]
                             break
-
                 if not lineas_a_reservar:
-                    if debug:
-                        print(f"      · Reserva NO: día {d['dia']} sin hotel que cumpla")
                     continue
-
                 for linea in lineas_a_reservar:
                     print(f"      ↪ [MUNDICOLOR] Reserva día {d['dia']} de {d['mes']} "
-                          f"({destino}/{provincia}, filtro {descripcion_filtro_reserva(destino, provincia)})")
+                          f"({destino}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
-
                     try:
                         if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
-                            print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
                             return dias_todos
                     except Exception:
                         pass
-
         return dias_todos
     except Exception as e:
         print(f"   [combo ERROR] {destino}/{provincia}: {e}", file=sys.stderr)
@@ -1178,50 +1110,58 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 
 
 # ---------------------------------------------------------------------
-# TURISMOSOCIAL: una pasada de un combo
+# TURISMOSOCIAL: combo
 # ---------------------------------------------------------------------
 def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera=False):
+    """
+    Devuelve:
+        list[dict]  → combo OK, con los días verdes (o [] si no había)
+        None        → combo OMITIDO (provincia no disponible, zona inválida, etc.)
+    """
     try:
         _cerrar_modales(page, debug=debug)
 
-        if primera:
-            ok = flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True)
-            if not ok:
-                return []
-        else:
-            try:
-                hay_form = page.locator("select:visible").count() > 0
-            except Exception:
-                hay_form = False
+        # ¿El formulario está montado?
+        form_ok = page.locator("#transport-accreditation").count() > 0
 
-            if hay_form:
-                print("      (formulario ya cargado: solo cambio zona/provincia y BUSCAR)")
-                try:
-                    regex_zona = (r"capital(es)?\s+de\s+provincia" if "Capitales" in zona
-                                  else r"costa")
-                    elegir_por_contenido(
-                        page, zona, "ZonaDestino",
-                        obligatorio=True, debug=debug,
-                        regex_fallback=regex_zona)
-                    page.wait_for_timeout(1500)
-                    base = provincia[3:] if provincia.startswith("I. ") else provincia
-                    regex_prov = _regex_flexible_tildes(base)
-                    elegir_por_contenido(
-                        page, provincia, "Provincia",
-                        obligatorio=True, debug=debug,
-                        regex_fallback=regex_prov)
-                    _pulsar_buscar_flexible(page, debug)
-                except Exception as e:
-                    print(f"      (reintento TS falló: {e}; hago flujo completo sin login)")
-                    if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=False):
-                        return []
-            else:
-                print("      (no veo el formulario, hago flujo completo sin login)")
-                if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=False):
-                    return []
+        if primera or not form_ok:
+            # Flujo completo (login + form)
+            if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
+                return None
+        else:
+            # Cambio rápido
+            print(f"      Zona = '{zona}' / Provincia = '{provincia}'")
+            try:
+                regex_zona = (r"capital(es)?\s+de\s+provincia" if "Capitales" in zona
+                              else r"costa")
+                elegir_por_contenido(page, zona, "ZonaDestino",
+                                     obligatorio=True, debug=debug,
+                                     regex_fallback=regex_zona)
+            except Exception as e:
+                print(f"      ✗ Zona '{zona}': {e}")
+                return None
+            page.wait_for_timeout(1500)
+
+            # ¿Está la provincia en el select?
+            base = provincia[3:] if provincia.startswith("I. ") else provincia
+            regex_prov = _regex_flexible_tildes(base)
+            if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
+                opts = _listar_opciones_select(page, "#province-accreditation")
+                print(f"      ⏭ Provincia '{provincia}' no está en el select. Opciones: {opts}")
+                return None
+
+            try:
+                elegir_por_contenido(page, provincia, "Provincia",
+                                     obligatorio=True, debug=debug,
+                                     regex_fallback=regex_prov)
+            except Exception as e:
+                print(f"      ✗ Provincia '{provincia}': {e}")
+                return None
+
+            if not _pulsar_buscar_flexible(page, debug):
+                return None
 
         _cerrar_modales(page, debug=debug)
-
         dias = page.evaluate(JS_DIAS_VERDES)
 
         dias_temporal_ok = []
@@ -1243,7 +1183,6 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
-
             if HACER_RESERVA and debe_reservar_turismosocial(d.get("mes", "")):
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
@@ -1254,25 +1193,18 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                         if hotel_match_estricto(linea):
                             lineas_a_reservar = [linea]
                             break
-
                 if not lineas_a_reservar:
-                    if debug:
-                        print(f"      · Reserva TS NO: día {d['dia']} sin hotel que cumpla")
                     continue
-
                 for linea in lineas_a_reservar:
                     print(f"      ↪ [TURISMOSOCIAL] Reserva día {d['dia']} de {d['mes']} "
-                          f"({zona}/{provincia}, meses {sorted(MESES_TURISMOSOCIAL)})")
+                          f"({zona}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
-
                     try:
                         if page.locator("select:visible").count() == 0:
-                            print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
                             return dias_todos
                     except Exception:
                         pass
-
         return dias_todos
     except Exception as e:
         print(f"   [combo TS ERROR] {zona}/{provincia}: {e}", file=sys.stderr)
@@ -1280,7 +1212,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             page.screenshot(path=str(OUT_DIR / f"error_ts_{zona}_{provincia}.png"), full_page=True)
         except Exception:
             pass
-        return []
+        return None  # tratar como omitido, no romper el bucle
 
 
 # ---------------------------------------------------------------------
@@ -1306,19 +1238,16 @@ def enviar_email(asunto, cuerpo, debug=False):
         return False
 
 
-def _seccion_cuerpo(res_seccion, titulo):
+def _seccion_cuerpo(res_seccion):
     lineas = []
     objetivos = (res_seccion or {}).get("disponibles_objetivo", [])
-
     zonas = {}
     for d in objetivos:
         key = f"{d.get('destino','?')} / {d.get('provincia') or '(sin provincia)'}"
         zonas.setdefault(key, []).append(d)
-
     if not zonas:
         lineas.append("(Sin disponibilidad en hoteles objetivo.)")
         return "\n".join(lineas)
-
     for zona, dias in zonas.items():
         lineas.append(f"--- {zona} ---")
         for d in dias:
@@ -1336,15 +1265,11 @@ def construir_cuerpo_combinado(res):
     partes = [
         f"Consulta: {res['fecha_consulta']}",
         "",
-        sep,
-        "MUNDICOLOR",
-        sep,
-        _seccion_cuerpo(res.get("mundicolor"), "MUNDICOLOR"),
+        sep, "MUNDICOLOR", sep,
+        _seccion_cuerpo(res.get("mundicolor")),
         "",
-        sep,
-        "TURISMOSOCIAL",
-        sep,
-        _seccion_cuerpo(res.get("turismosocial"), "TURISMOSOCIAL"),
+        sep, "TURISMOSOCIAL", sep,
+        _seccion_cuerpo(res.get("turismosocial")),
     ]
     return "\n".join(partes)
 
@@ -1404,15 +1329,14 @@ def comprobar(debug=False, solo=None):
 
         page = context.new_page()
         try:
+            # ============ MUNDICOLOR ============
             print(f"\n{'=' * 25} MUNDICOLOR {'=' * 25}")
             print(f"→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
             todos = []
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
-                print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro email: {descripcion_filtro(dest)}"
-                      f"  · filtro reserva: {descripcion_filtro_reserva(dest, prov)}")
+                print(f"[{i}/{len(combos)}] {dest} / {prov}")
                 dias = comprobar_combo(page, context, dest, prov, debug, primera=(i == 1))
-
                 if not dias:
                     print("      · sin días")
                 else:
@@ -1425,7 +1349,6 @@ def comprobar(debug=False, solo=None):
                         for l in d["detalle"]:
                             prefijo = "          · " if not hotel_match(l) else "          ★ "
                             print(f"{prefijo}{l}")
-
                 todos.extend(dias)
                 todos_objetivo.extend([d for d in dias if d.get("es_objetivo")])
 
@@ -1460,6 +1383,7 @@ def comprobar(debug=False, solo=None):
                 "disponibles_objetivo": todos_objetivo,
             }
 
+            # ============ TURISMOSOCIAL ============
             if solo:
                 print("\n(flag --solo activo: se omite TurismoSocial)")
                 resultado_ts = None
@@ -1470,11 +1394,26 @@ def comprobar(debug=False, solo=None):
 
                 todos_ts = []
                 todos_objetivo_ts = []
+                fallos_consec = 0
+                abortado = False
                 for i, (zona, prov) in enumerate(combos_ts, 1):
-                    print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  · filtro reserva: meses {sorted(MESES_TURISMOSOCIAL)}")
+                    if abortado:
+                        print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  ⏭ (TurismoSocial abortado)")
+                        continue
+                    print(f"[{i}/{len(combos_ts)}] {zona} / {prov}")
                     dias = comprobar_combo_turismosocial(
                         page, context, zona, prov, debug, primera=(i == 1)
                     )
+
+                    if dias is None:
+                        print("      ⏭ combo omitido")
+                        fallos_consec += 1
+                        if fallos_consec >= MAX_FALLOS_CONSECUTIVOS_TS:
+                            print(f"      ⚠ {fallos_consec} combos TS omitidos seguidos → "
+                                  f"abortando TurismoSocial para no alargar el script.")
+                            abortado = True
+                        continue
+                    fallos_consec = 0
 
                     if not dias:
                         print("      · sin días")
@@ -1504,6 +1443,7 @@ def comprobar(debug=False, solo=None):
                     ],
                     "disponibles": todos_ts,
                     "disponibles_objetivo": todos_objetivo_ts,
+                    "abortado": abortado,
                 }
 
             resultado = {
@@ -1537,7 +1477,6 @@ def mostrar(res, debug=False):
         return
     res_mundi = res.get("mundicolor") or {}
     res_ts = res.get("turismosocial") or {}
-
     n_obj_mundi = len(res_mundi.get("disponibles_objetivo", []))
     n_obj_ts = len(res_ts.get("disponibles_objetivo", [])) if res_ts else 0
     n_obj_total = n_obj_mundi + n_obj_ts
@@ -1565,8 +1504,7 @@ if __name__ == "__main__":
     ap.add_argument("--debug", action="store_true",
                     help="navegador visible + capturas")
     ap.add_argument("--solo", metavar="DESTINO",
-                    help="comprobar solo un destino de Mundicolor, p.ej. --solo BALEARES "
-                         "(omite TurismoSocial)")
+                    help="comprobar solo un destino de Mundicolor (omite TurismoSocial)")
     args = ap.parse_args()
 
     while True:
