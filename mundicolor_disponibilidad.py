@@ -77,7 +77,8 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Murcia",
     "Santa Cruz de Tenerife",
 ]
-MESES_TURISMOSOCIAL = {3, 4, 5, 6}
+MESES_TURISMOSOCIAL = {3, 4, 5, 6}          # disponibles: marzo–junio
+MESES_TURISMOSOCIAL_ESPERA = {5, 6, 7, 8, 9, 10}  # lista de espera: desde mayo
 MAX_FALLOS_CONSECUTIVOS_TS = 3
 # ---------------------------------------------------------------------
 
@@ -95,7 +96,7 @@ HOTELES_OBJETIVO = [
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
     # --- nuevos ---
-    "Bergantin",
+    "Bergantín",
     "Mar Amantis",
     "Club Hotel Aguamarina",
     "BLUESEA Aloe Corralejo",
@@ -266,7 +267,6 @@ def _dump_debug(page, name):
 
 
 def _diagnostico_resultado_ts(page, debug=False):
-    """Info útil tras pulsar Buscar en TurismoSocial."""
     try:
         print(f"      [TS] URL actual: {page.url}")
     except Exception:
@@ -282,11 +282,16 @@ def _diagnostico_resultado_ts(page, debug=False):
                         const bg = (getComputedStyle(el).backgroundColor.match(/\\d+/g) || []).map(Number);
                         return bg.length >= 3 && bg[1] > 120 && bg[1] > bg[0] + 40 && bg[1] > bg[2] + 40;
                     }).length,
+                naranjaLike: [...document.querySelectorAll('td, a, div, span, li, button')]
+                    .filter(el => {
+                        const bg = (getComputedStyle(el).backgroundColor.match(/\\d+/g) || []).map(Number);
+                        return bg.length >= 3 && bg[0] > 180 && bg[1] > 120 && bg[2] < 140 && bg[0] > bg[2] + 60;
+                    }).length,
                 textoSnippet: t
             };
         }""")
         print(f"      [TS] #availContent={info['avail']} a.number-day={info['numberDay']} "
-              f"verdes-ish={info['greenLike']}")
+              f"verdes-ish={info['greenLike']} naranjas-ish={info['naranjaLike']}")
         if debug:
             print(f"      [TS] texto[:240]={info['textoSnippet']!r}")
     except Exception as e:
@@ -344,11 +349,18 @@ def debe_reservar(destino, provincia, mes_str):
     return anio == f["anio"] and mes in f["meses"]
 
 
-def debe_reservar_turismosocial(mes_str):
+def debe_reservar_turismosocial(mes_str, en_lista_espera=False):
+    """
+    - Disponible: meses MESES_TURISMOSOCIAL (marzo–junio)
+    - Lista de espera: a partir de mayo (MESES_TURISMOSOCIAL_ESPERA)
+    """
     ma = mes_anio(mes_str)
     if not ma:
         return False
-    return ma[1] in MESES_TURISMOSOCIAL
+    anio, mes = ma
+    if en_lista_espera:
+        return mes in MESES_TURISMOSOCIAL_ESPERA
+    return mes in MESES_TURISMOSOCIAL
 
 
 # ---------------------------------------------------------------------
@@ -918,13 +930,40 @@ JS_DIAS_VERDES = """
 }
 """
 
+# --- Días marcados como LISTA DE ESPERA (naranja/amarillo o etiqueta textual) ---
+JS_DIAS_LISTA_ESPERA = """
+() => {
+  const meses = /(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\\s+(de\\s+)?\\d{4}/i;
+  const out = [];
+  let n = 0;
+  for (const el of document.querySelectorAll('td, button, a, div, span, li')) {
+    if (el.children.length > 2) continue;
+    const txt = (el.innerText || '').trim();
+    if (!/^\\d{1,2}$/.test(txt)) continue;
+    const meta = ((el.className || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.title || '')).toLowerCase();
+    const bg = (getComputedStyle(el).backgroundColor.match(/\\d+/g) || []).map(Number);
+    // Naranja/amarillo: R y G altos, B bajo
+    const naranja = bg.length >= 3 && bg[0] > 180 && bg[1] > 120 && bg[2] < 140 && bg[0] > bg[2] + 60;
+    const marcado = /lista[-_ ]?espera|listaespera|waiting[-_ ]?list|en[-_ ]?espera/.test(meta)
+                    && !/no[-_ ]?espera|sin[-_ ]?espera/.test(meta);
+    if (!(naranja || marcado)) continue;
+    let mes = '';
+    let a = el;
+    while (a && !mes) { const m = (a.innerText || '').match(meses); if (m) mes = m[0]; a = a.parentElement; }
+    el.setAttribute('data-espera', String(n));
+    out.push({ idx: n++, dia: txt, mes, meta: meta.slice(0, 80) });
+  }
+  return out;
+}
+"""
+
 # --- Extrae SOLO hoteles con botón SELECCIONAR visible ---
 JS_HOTELES_DISPONIBLES = r"""
 () => {
   const out = [];
   const seen = new Set();
   const limpiar = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[áa]s|no|s[ií]|ok|cerrar|reservar)$/i.test(l);
+  const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[áa]s|no|s[ií]|ok|cerrar|reservar|apuntarse|lista\s+de\s+espera|darse\s+de\s+baja)$/i.test(l);
 
   const todos = [...document.querySelectorAll(
     'button, a, [role="button"], input[type="button"], input[type="submit"]'
@@ -1004,13 +1043,13 @@ def descripcion_filtro_reserva(destino, provincia=None):
     return f"{f['anio']} (meses {sorted(f['meses'])})"
 
 
-def detalle_dia(page, idx, debug=False):
+def detalle_dia(page, idx, debug=False, attr="libre"):
     """
-    Devuelve SOLO los hoteles disponibles (con botón SELECCIONAR visible)
-    para el día `idx`. Cada elemento: "Nombre | Extras | Precio €".
+    Devuelve SOLO los hoteles con botón SELECCIONAR visible para el día
+    referenciado por el atributo `data-<attr>="idx"` (`libre` o `espera`).
     """
     _cerrar_modales(page, debug=debug)
-    loc = page.locator(f'[data-libre="{idx}"]').first
+    loc = page.locator(f'[data-{attr}="{idx}"]').first
     try:
         loc.click(timeout=8000)
     except PWTimeout:
@@ -1019,7 +1058,7 @@ def detalle_dia(page, idx, debug=False):
         try:
             loc.click(timeout=8000, force=True)
         except Exception as e:
-            print(f"      · No pude abrir el detalle del día {idx}: {e}")
+            print(f"      · No pude abrir el detalle del día ({attr}) {idx}: {e}")
             return []
     page.wait_for_timeout(1800)
     _cerrar_modales(page, debug=debug)
@@ -1189,6 +1228,7 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
             d["provincia"] = provincia
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
+            d["en_lista_espera"] = False
             dias_todos.append(d)
             if HACER_RESERVA:
                 if not debe_reservar(destino, provincia, d.get("mes", "")):
@@ -1230,7 +1270,7 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera=False):
     """
     Devuelve:
-        list[dict]  → combo OK, con los días verdes (o [] si no había)
+        list[dict]  → combo OK, con los días verdes y de lista de espera
         None        → combo OMITIDO (provincia no disponible, zona inválida, etc.)
     """
     try:
@@ -1279,27 +1319,43 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 return None
 
         _cerrar_modales(page, debug=debug)
-        dias = page.evaluate(JS_DIAS_VERDES)
 
-        print(f"      [TS] días verdes en crudo (sin filtrar por meses): {len(dias)}")
-        if dias:
-            meses_detectados = sorted({(d.get('mes') or '?') for d in dias})
-            print(f"      [TS] meses detectados: {meses_detectados[:12]}")
+        # --- Disponibles (verde) ---
+        dias_verdes = page.evaluate(JS_DIAS_VERDES)
+        # --- Lista de espera (naranja / etiqueta) ---
+        dias_espera = page.evaluate(JS_DIAS_LISTA_ESPERA)
+
+        print(f"      [TS] días verdes en crudo (sin filtrar por meses): {len(dias_verdes)}")
+        print(f"      [TS] días lista de espera en crudo: {len(dias_espera)}")
+        if dias_verdes:
+            meses_verdes = sorted({(d.get('mes') or '?') for d in dias_verdes})
+            print(f"      [TS] meses verdes detectados: {meses_verdes[:12]}")
+        if dias_espera:
+            meses_espera = sorted({(d.get('mes') or '?') for d in dias_espera})
+            print(f"      [TS] meses espera detectados: {meses_espera[:12]}")
         _diagnostico_resultado_ts(page, debug=debug)
 
+        # Filtro temporal
         dias_temporal_ok = []
-        for d in dias:
-            if debe_reservar_turismosocial(d.get("mes", "")):
+        for d in dias_verdes:
+            if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=False):
+                d["en_lista_espera"] = False
+                dias_temporal_ok.append(d)
+        for d in dias_espera:
+            if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=True):
+                d["en_lista_espera"] = True
                 dias_temporal_ok.append(d)
 
-        if dias and not dias_temporal_ok:
-            print("      · sin días (había días verdes, pero fuera de los meses 3–6)")
-        elif not dias:
-            print("      · sin días (no hay ningún día verde en el calendario)")
+        if not dias_temporal_ok:
+            if not dias_verdes and not dias_espera:
+                print("      · sin días (no hay ningún día verde ni de lista de espera)")
+            else:
+                print("      · sin días (había días, pero fuera de los meses permitidos)")
 
         dias_todos = []
         for d in dias_temporal_ok:
-            detalle = detalle_dia(page, d["idx"], debug=debug)
+            attr = "espera" if d.get("en_lista_espera") else "libre"
+            detalle = detalle_dia(page, d["idx"], debug=debug, attr=attr)
             hoteles_encontrados = set()
             for linea in detalle:
                 h = hotel_match(linea)
@@ -1311,7 +1367,9 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
-            if HACER_RESERVA and debe_reservar_turismosocial(d.get("mes", "")):
+
+            if HACER_RESERVA and debe_reservar_turismosocial(
+                    d.get("mes", ""), en_lista_espera=d.get("en_lista_espera", False)):
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
                     if detalle:
@@ -1324,7 +1382,8 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 if not lineas_a_reservar:
                     continue
                 for linea in lineas_a_reservar:
-                    print(f"      ↪ [TURISMOSOCIAL] Reserva día {d['dia']} de {d['mes']} "
+                    tipo = "espera" if d.get("en_lista_espera") else "disponible"
+                    print(f"      ↪ [TURISMOSOCIAL:{tipo}] Reserva día {d['dia']} de {d['mes']} "
                           f"({zona}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
@@ -1368,9 +1427,8 @@ def enviar_email(asunto, cuerpo, debug=False):
 
 def _seccion_cuerpo(res_seccion, combos):
     """
-    Recorre TODOS los combos comprobados y, dentro de cada uno,
-    muestra los días disponibles (si los hay). Sin contadores, sin MODO PRUEBA,
-    sin 'ver detalles' / 'No'.
+    Recorre TODOS los combos comprobados y muestra los días disponibles
+    (y los de lista de espera en TurismoSocial, marcados como tal).
     """
     if not res_seccion:
         return "(sin datos)"
@@ -1394,10 +1452,13 @@ def _seccion_cuerpo(res_seccion, combos):
         else:
             for d in dias_combo:
                 hoteles = ", ".join(d.get("hoteles_objetivo", []))
+                prefijo = "  • "
+                if d.get("en_lista_espera"):
+                    prefijo = "  ⏳ [LISTA DE ESPERA] "
                 if hoteles:
-                    lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
+                    lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}   [{hoteles}]")
                 else:
-                    lineas.append(f"  • Día {d['dia']} de {d['mes']}")
+                    lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}")
                 for l in d.get("detalle", []):
                     lineas.append(f"      {l}")
         lineas.append("")
@@ -1443,7 +1504,8 @@ def comprobar(debug=False, solo=None):
         for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
             if d == dest:
                 print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
-    print(f"→ TurismoSocial: meses de interés = {sorted(MESES_TURISMOSOCIAL)}")
+    print(f"→ TurismoSocial: disponibles meses = {sorted(MESES_TURISMOSOCIAL)}")
+    print(f"→ TurismoSocial: lista de espera meses = {sorted(MESES_TURISMOSOCIAL_ESPERA)}")
     if PROBAR_EMAIL_SIN_FILTRO:
         print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
     if HACER_RESERVA:
@@ -1547,6 +1609,7 @@ def comprobar(debug=False, solo=None):
                 fallos_consec = 0
                 abortado = False
                 n_ok, n_omit, n_dias_total = 0, 0, 0
+                n_dias_espera = 0
                 for i, (zona, prov) in enumerate(combos_ts, 1):
                     if abortado:
                         print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  ⏭ (TurismoSocial abortado)")
@@ -1568,16 +1631,18 @@ def comprobar(debug=False, solo=None):
                     fallos_consec = 0
                     n_ok += 1
                     n_dias_total += len(dias)
+                    n_dias_espera += sum(1 for d in dias if d.get("en_lista_espera"))
 
                     if not dias:
                         print("      · sin días")
                     else:
                         for d in dias:
                             hoteles = d.get("hoteles_objetivo", [])
+                            etiq = "⏳ ESPERA" if d.get("en_lista_espera") else "🟢"
                             if hoteles:
-                                print(f"      🟢 Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
+                                print(f"      {etiq} Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
                             else:
-                                print(f"      ⚪ Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
+                                print(f"      {etiq} Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
                             for l in d["detalle"]:
                                 prefijo = "          · " if not hotel_match(l) else "          ★ "
                                 print(f"{prefijo}{l}")
@@ -1586,7 +1651,8 @@ def comprobar(debug=False, solo=None):
                     todos_objetivo_ts.extend([d for d in dias if d.get("es_objetivo")])
 
                 print(f"\n  → TS resumen: OK={n_ok}, omitidos={n_omit}, "
-                      f"días verdes totales={n_dias_total}, abortado={abortado}")
+                      f"días totales={n_dias_total} (espera={n_dias_espera}), "
+                      f"abortado={abortado}")
 
                 resultado_ts = {
                     "fecha_consulta": ahora_es_str(),
@@ -1595,13 +1661,16 @@ def comprobar(debug=False, solo=None):
                     "hacer_reserva": HACER_RESERVA,
                     "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
                     "meses_interes": sorted(MESES_TURISMOSOCIAL),
+                    "meses_interes_espera": sorted(MESES_TURISMOSOCIAL_ESPERA),
                     "combos_comprobados": [
                         {"destino": z, "provincia": p} for z, p in combos_ts
                     ],
                     "disponibles": todos_ts,
                     "disponibles_objetivo": todos_objetivo_ts,
                     "abortado": abortado,
-                    "resumen": {"ok": n_ok, "omitidos": n_omit, "dias_verdes": n_dias_total},
+                    "resumen": {"ok": n_ok, "omitidos": n_omit,
+                                "dias_totales": n_dias_total,
+                                "dias_espera": n_dias_espera},
                 }
 
             resultado = {
