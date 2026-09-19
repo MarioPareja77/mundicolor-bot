@@ -372,17 +372,13 @@ def es_hotel_4_estrellas(linea):
 # ESTANCIA: 10 DÍAS
 # ---------------------------------------------------------------------
 PATRONES_DIAS_ESTANCIA = [
-    r"\b(\d{1,2})\s*d[ií]as?\b",             # "10 días", "8 días"
-    r"\bestancia\s*(?:de\s*)?(\d{1,2})\b",   # "estancia de 10", "estancia 10"
-    r"\b(\d{1,2})\s*noches?\b",              # "10 noches"
+    r"\b(\d{1,2})\s*d[ií]as?\b",
+    r"\bestancia\s*(?:de\s*)?(\d{1,2})\b",
+    r"\b(\d{1,2})\s*noches?\b",
 ]
 
 
 def extraer_dias_estancia(*textos):
-    """
-    Devuelve los días de estancia (int) si se encuentran en alguno de los textos.
-    Si encuentra varios valores, devuelve el primero que aparezca.
-    """
     for texto in textos:
         if not texto:
             continue
@@ -398,7 +394,6 @@ def extraer_dias_estancia(*textos):
 
 
 def es_estancia_10_dias(*textos):
-    """True si los textos indican 10 días de estancia."""
     return extraer_dias_estancia(*textos) == DIAS_ESTANCIA_TS
 
 
@@ -1640,6 +1635,7 @@ def comprobar(debug=False, solo=None):
     print(f"→ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abril–octubre)")
     print(f"→ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} días")
     print("→ TurismoSocial: lista de espera SIN restricción de posición")
+    print("→ Email: SOLO se envía si hay al menos un día DISPONIBLE (no basta lista de espera)")
     if SOLO_RESERVAR_4_ESTRELLAS:
         print("⚠️  SOLO_RESERVAR_4_ESTRELLAS = True → solo se reservará si el hotel es 4★")
     if PROBAR_EMAIL_SIN_FILTRO:
@@ -1844,18 +1840,27 @@ def mostrar(res, debug=False):
     res_mundi = res.get("mundicolor") or {}
     res_ts = res.get("turismosocial") or {}
 
-    n_disp_mundi = len(res_mundi.get("disponibles", []) or [])
-    n_disp_ts = len((res_ts or {}).get("disponibles", []) or [])
-    n_total = n_disp_mundi + n_disp_ts
+    # Contar días DISPONIBLES (sin contar lista de espera) y días en espera
+    disp_mundi = res_mundi.get("disponibles", []) or []
+    disp_ts = (res_ts or {}).get("disponibles", []) or []
+
+    n_disp_real_mundi = sum(1 for d in disp_mundi if not d.get("en_lista_espera"))
+    n_disp_real_ts    = sum(1 for d in disp_ts    if not d.get("en_lista_espera"))
+
+    n_espera_mundi = sum(1 for d in disp_mundi if d.get("en_lista_espera"))
+    n_espera_ts    = sum(1 for d in disp_ts    if d.get("en_lista_espera"))
+
+    n_disponibles = n_disp_real_mundi + n_disp_real_ts
 
     print(f"\n[{res['fecha_consulta']}]")
-    print(f"  Mundicolor    : {n_disp_mundi} día(s) con disponibilidad")
-    print(f"  TurismoSocial : {n_disp_ts} día(s) con disponibilidad / lista de espera")
+    print(f"  Mundicolor    : {n_disp_real_mundi} disponible(s) · {n_espera_mundi} en lista de espera")
+    print(f"  TurismoSocial : {n_disp_real_ts} disponible(s) · {n_espera_ts} en lista de espera")
 
     ASUNTO = "[IMSERSO 2027] Disponibilidad hoteles islas y península"
 
-    if n_total == 0:
-        print("→ Sin disponibilidad ni lista de espera: NO se envía email.")
+    # Solo se envía el email si hay AL MENOS UN día disponible (no basta con lista de espera)
+    if n_disponibles == 0:
+        print("→ Sin hoteles disponibles (solo lista de espera o nada): NO se envía email.")
         return
 
     print("\n→ Enviando email resumen (Mundicolor + TurismoSocial)…")
