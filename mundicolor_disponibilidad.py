@@ -56,17 +56,17 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Alicante",
     "Almería",
     "Cadiz",
-    "Gran Canaria",          # ← no está en el <select> de TS → se omite
-    "Granada",               # ← ídem
+    "Gran Canaria",
+    "Granada",
     "Huelva",
-    "I. Mallorca",           # ← ídem
-    "Madrid",                # ← ídem
+    "I. Mallorca",
+    "Madrid",
     "Málaga",
     "Murcia",
-    "Santa Cruz de Tenerife",# ← ídem
+    "Santa Cruz de Tenerife",
 ]
 MESES_TURISMOSOCIAL = {3, 4, 5, 6}
-MAX_FALLOS_CONSECUTIVOS_TS = 3   # si fallan 3 seguidos, se aborta TurismoSocial
+MAX_FALLOS_CONSECUTIVOS_TS = 3
 # ---------------------------------------------------------------------
 
 # ----------------- HOTELES OBJETIVO (whitelist) ----------------------
@@ -243,6 +243,34 @@ def _dump_debug(page, name):
                 print(f"      [debug] no pude volcar frame {fi}: {e}")
     except Exception as e:
         print(f"      [debug] dump falló: {e}")
+
+
+def _diagnostico_resultado_ts(page, debug=False):
+    """Info útil tras pulsar Buscar en TurismoSocial."""
+    try:
+        print(f"      [TS] URL actual: {page.url}")
+    except Exception:
+        pass
+    try:
+        info = page.evaluate("""() => {
+            const t = (document.body.innerText || '').replace(/\\s+/g,' ').slice(0, 240);
+            return {
+                avail: !!document.querySelector('#availContent'),
+                numberDay: document.querySelectorAll('a.number-day').length,
+                greenLike: [...document.querySelectorAll('td, a, div, span, li, button')]
+                    .filter(el => {
+                        const bg = (getComputedStyle(el).backgroundColor.match(/\\d+/g) || []).map(Number);
+                        return bg.length >= 3 && bg[1] > 120 && bg[1] > bg[0] + 40 && bg[1] > bg[2] + 40;
+                    }).length,
+                textoSnippet: t
+            };
+        }""")
+        print(f"      [TS] #availContent={info['avail']} a.number-day={info['numberDay']} "
+              f"verdes-ish={info['greenLike']}")
+        if debug:
+            print(f"      [TS] texto[:240]={info['textoSnippet']!r}")
+    except Exception as e:
+        print(f"      [TS] no pude diagnosticar: {e}")
 
 
 # ---------------------------------------------------------------------
@@ -518,7 +546,6 @@ def _iter_selects(page):
 
 
 def _listar_opciones_select(page, selector_por_id):
-    """Devuelve la lista de <option> del select con el id dado."""
     try:
         return page.locator(selector_por_id).first.evaluate(
             "e => [...e.options].map(o => o.text.trim())")
@@ -527,7 +554,6 @@ def _listar_opciones_select(page, selector_por_id):
 
 
 def _opcion_disponible(page, selector_por_id, texto, regex_flex=None):
-    """True si `texto` (o regex_flex) existe en las opciones del select dado."""
     opts = _listar_opciones_select(page, selector_por_id)
     for o in opts:
         if o.strip().lower() == texto.strip().lower():
@@ -753,7 +779,6 @@ def _regex_flexible_tildes(s):
 
 
 def _esperar_formulario_ts(page, timeout_s=10, debug=False):
-    """Espera a que #transport-accreditation aparezca visible."""
     t0 = time.time()
     while (time.time() - t0) < timeout_s:
         _cerrar_modales(page, debug=debug)
@@ -820,7 +845,13 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     page.wait_for_timeout(1500)
 
-    # ¿Está la provincia en el select?
+    # NUEVO: mostrar provincias de esta zona
+    try:
+        opts_prov = _listar_opciones_select(page, "#province-accreditation")
+        print(f"      [TS] Provincias disponibles en '{zona}': {opts_prov}")
+    except Exception:
+        pass
+
     base = provincia[3:] if provincia.startswith("I. ") else provincia
     regex_prov = _regex_flexible_tildes(base)
     if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
@@ -1121,15 +1152,12 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
     try:
         _cerrar_modales(page, debug=debug)
 
-        # ¿El formulario está montado?
         form_ok = page.locator("#transport-accreditation").count() > 0
 
         if primera or not form_ok:
-            # Flujo completo (login + form)
             if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
                 return None
         else:
-            # Cambio rápido
             print(f"      Zona = '{zona}' / Provincia = '{provincia}'")
             try:
                 regex_zona = (r"capital(es)?\s+de\s+provincia" if "Capitales" in zona
@@ -1142,7 +1170,13 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 return None
             page.wait_for_timeout(1500)
 
-            # ¿Está la provincia en el select?
+            # NUEVO: log provincias de esta zona
+            try:
+                opts_prov = _listar_opciones_select(page, "#province-accreditation")
+                print(f"      [TS] Provincias disponibles en '{zona}': {opts_prov}")
+            except Exception:
+                pass
+
             base = provincia[3:] if provincia.startswith("I. ") else provincia
             regex_prov = _regex_flexible_tildes(base)
             if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
@@ -1164,10 +1198,23 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
         _cerrar_modales(page, debug=debug)
         dias = page.evaluate(JS_DIAS_VERDES)
 
+        # ---- NUEVO: información en crudo ----
+        print(f"      [TS] días verdes en crudo (sin filtrar por meses): {len(dias)}")
+        if dias:
+            meses_detectados = sorted({(d.get('mes') or '?') for d in dias})
+            print(f"      [TS] meses detectados: {meses_detectados[:12]}")
+        _diagnostico_resultado_ts(page, debug=debug)
+        # -------------------------------------
+
         dias_temporal_ok = []
         for d in dias:
             if debe_reservar_turismosocial(d.get("mes", "")):
                 dias_temporal_ok.append(d)
+
+        if dias and not dias_temporal_ok:
+            print("      · sin días (había días verdes, pero fuera de los meses 3–6)")
+        elif not dias:
+            print("      · sin días (no hay ningún día verde en el calendario)")
 
         dias_todos = []
         for d in dias_temporal_ok:
@@ -1212,7 +1259,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             page.screenshot(path=str(OUT_DIR / f"error_ts_{zona}_{provincia}.png"), full_page=True)
         except Exception:
             pass
-        return None  # tratar como omitido, no romper el bucle
+        return None
 
 
 # ---------------------------------------------------------------------
@@ -1396,6 +1443,7 @@ def comprobar(debug=False, solo=None):
                 todos_objetivo_ts = []
                 fallos_consec = 0
                 abortado = False
+                n_ok, n_omit, n_dias_total = 0, 0, 0
                 for i, (zona, prov) in enumerate(combos_ts, 1):
                     if abortado:
                         print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  ⏭ (TurismoSocial abortado)")
@@ -1407,6 +1455,7 @@ def comprobar(debug=False, solo=None):
 
                     if dias is None:
                         print("      ⏭ combo omitido")
+                        n_omit += 1
                         fallos_consec += 1
                         if fallos_consec >= MAX_FALLOS_CONSECUTIVOS_TS:
                             print(f"      ⚠ {fallos_consec} combos TS omitidos seguidos → "
@@ -1414,6 +1463,8 @@ def comprobar(debug=False, solo=None):
                             abortado = True
                         continue
                     fallos_consec = 0
+                    n_ok += 1
+                    n_dias_total += len(dias)
 
                     if not dias:
                         print("      · sin días")
@@ -1431,6 +1482,9 @@ def comprobar(debug=False, solo=None):
                     todos_ts.extend(dias)
                     todos_objetivo_ts.extend([d for d in dias if d.get("es_objetivo")])
 
+                print(f"\n  → TS resumen: OK={n_ok}, omitidos={n_omit}, "
+                      f"días verdes totales={n_dias_total}, abortado={abortado}")
+
                 resultado_ts = {
                     "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
                     "hoteles_objetivo": HOTELES_OBJETIVO,
@@ -1444,6 +1498,7 @@ def comprobar(debug=False, solo=None):
                     "disponibles": todos_ts,
                     "disponibles_objetivo": todos_objetivo_ts,
                     "abortado": abortado,
+                    "resumen": {"ok": n_ok, "omitidos": n_omit, "dias_verdes": n_dias_total},
                 }
 
             resultado = {
