@@ -63,7 +63,7 @@ COMBOS = [
 # ---------------------------------------------------------------------
 
 # -------------------- COMBOS TURISMOSOCIAL ---------------------------
-ZONAS_TURISMOSOCIAL = ["Capitales de provincia", "Costas"]
+ZONAS_TURISMOSOCIAL = ["Costas"]
 PROVINCIAS_TURISMOSOCIAL = [
     "Alicante",
     "Almería",
