@@ -95,7 +95,7 @@ FILTRO_RESERVA_POR_DESTINO = {
 
 # Overrides por (destino, provincia). Si existe, sustituye al filtro del destino.
 FILTRO_RESERVA_POR_PROVINCIA = {
-    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {3, 4}},
+    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {4}},
     ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {3, 4}},
 }
 # ---------------------------------------------------------------------
