@@ -63,6 +63,7 @@ COMBOS = [
 # ---------------------------------------------------------------------
 
 # -------------------- COMBOS TURISMOSOCIAL ---------------------------
+# Solo se prueba "Costas".
 ZONAS_TURISMOSOCIAL = ["Costas"]
 PROVINCIAS_TURISMOSOCIAL = [
     "Alicante",
@@ -77,10 +78,12 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Murcia",
     "Santa Cruz de Tenerife",
 ]
-# TurismoSocial ahora no filtra por mes: se procesan todos los días.
-MESES_TURISMOSOCIAL = {3, 4, 5, 6}          # (referencia, ya no se usa para filtrar)
-MESES_TURISMOSOCIAL_ESPERA = {5, 6, 7, 8, 9, 10}  # (referencia, ya no se usa para filtrar)
-MAX_POSICION_LISTA_ESPERA = 4               # solo lista de espera con posición ≤ 4
+# Reglas TurismoSocial / Costas:
+#   - Mes: abril (4) a octubre (10), ambos inclusive.
+#   - Estancia: exactamente 10 días.
+#   - Lista de espera: cualquier posición vale.
+MESES_TURISMOSOCIAL = {4, 5, 6, 7, 8, 9, 10}
+DIAS_ESTANCIA_TS = 10
 MAX_FALLOS_CONSECUTIVOS_TS = 3
 # ---------------------------------------------------------------------
 
@@ -346,12 +349,12 @@ def hotel_match_estricto(linea):
 # 4 ESTRELLAS
 # ---------------------------------------------------------------------
 PATRONES_4_ESTRELLAS = [
-    r"\b4\s*\*",              # "4*", "4 *"
-    r"\b4\s*★",               # "4★"
-    r"\(\s*4\s*\*\s*\)",      # "(4*)"
-    r"\b4\s*estrellas?\b",    # "4 estrellas", "4 estrella"
-    r"\bcategor[ií]a\s*4\b",  # "categoría 4"
-    r"(?<!\*)\*{4}(?!\*)",    # "****" exactamente 4 asteriscos
+    r"\b4\s*\*",
+    r"\b4\s*★",
+    r"\(\s*4\s*\*\s*\)",
+    r"\b4\s*estrellas?\b",
+    r"\bcategor[ií]a\s*4\b",
+    r"(?<!\*)\*{4}(?!\*)",
 ]
 
 
@@ -366,26 +369,25 @@ def es_hotel_4_estrellas(linea):
 
 
 # ---------------------------------------------------------------------
-# POSICIÓN EN LISTA DE ESPERA
+# ESTANCIA: 10 DÍAS
 # ---------------------------------------------------------------------
-PATRONES_POSICION_ESPERA = [
-    r"posici[oó]n\s*[:\-]?\s*(\d+)",           # "posición 3", "posición: 3"
-    r"n[ºo°]\.?\s*[:\-]?\s*(\d+)",             # "nº 3", "n. 3", "no 3"
-    r"n[uú]mero\s*[:\-]?\s*(\d+)",             # "número 3"
-    r"lugar\s*[:\-]?\s*(\d+)",                 # "lugar 3"
-    r"puesto\s*[:\-]?\s*(\d+)",                # "puesto 3"
-    r"turno\s*[:\-]?\s*(\d+)",                 # "turno 3"
-    r"(\d+)\s*[ºo°]?\s*(?:en\s+)?(?:la\s+)?lista",  # "3 en la lista"
+PATRONES_DIAS_ESTANCIA = [
+    r"\b(\d{1,2})\s*d[ií]as?\b",             # "10 días", "8 días"
+    r"\bestancia\s*(?:de\s*)?(\d{1,2})\b",   # "estancia de 10", "estancia 10"
+    r"\b(\d{1,2})\s*noches?\b",              # "10 noches"
 ]
 
 
-def extraer_posicion_lista_espera(*textos):
-    """Devuelve la posición (int) en lista de espera si se encuentra en alguno de los textos."""
+def extraer_dias_estancia(*textos):
+    """
+    Devuelve los días de estancia (int) si se encuentran en alguno de los textos.
+    Si encuentra varios valores, devuelve el primero que aparezca.
+    """
     for texto in textos:
         if not texto:
             continue
         s = texto.lower()
-        for p in PATRONES_POSICION_ESPERA:
+        for p in PATRONES_DIAS_ESTANCIA:
             m = re.search(p, s)
             if m:
                 try:
@@ -393,6 +395,11 @@ def extraer_posicion_lista_espera(*textos):
                 except Exception:
                     continue
     return None
+
+
+def es_estancia_10_dias(*textos):
+    """True si los textos indican 10 días de estancia."""
+    return extraer_dias_estancia(*textos) == DIAS_ESTANCIA_TS
 
 
 def debe_reservar(destino, provincia, mes_str):
@@ -408,17 +415,17 @@ def debe_reservar(destino, provincia, mes_str):
     return anio == f["anio"] and mes in f["meses"]
 
 
-def debe_reservar_turismosocial(mes_str, en_lista_espera=False, posicion=None):
+def debe_reservar_turismosocial(mes_str, en_lista_espera=False):
     """
-    TurismoSocial: SIN restricción de mes.
-      - Si NO es lista de espera → reservar (se exige 4★ por otro lado).
-      - Si es lista de espera     → reservar solo si posición ≤ MAX_POSICION_LISTA_ESPERA.
+    TurismoSocial / Costas:
+      - Mes entre abril y octubre (ambos inclusive).
+      - Posición de lista de espera ignorada (cualquier posición vale).
     """
-    if en_lista_espera:
-        if posicion is None:
-            return False
-        return posicion <= MAX_POSICION_LISTA_ESPERA
-    return True
+    ma = mes_anio(mes_str)
+    if not ma:
+        return False
+    _, mes = ma
+    return mes in MESES_TURISMOSOCIAL
 
 
 # ---------------------------------------------------------------------
@@ -1053,7 +1060,7 @@ JS_HOTELES_DISPONIBLES = r"""
 
     const extras = lineas.slice(1)
       .filter(l => !/\d+\s*€/.test(l))
-      .slice(0, 3);
+      .slice(0, 5);
 
     out.push({
       nombre: nombre,
@@ -1443,17 +1450,22 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             print(f"      [TS] meses espera detectados: {meses_espera[:12]}")
         _diagnostico_resultado_ts(page, debug=debug)
 
-        # SIN filtro de mes: procesamos todos los días
+        # Filtro por mes (abril–octubre), tanto para verdes como para espera.
         dias_temporal_ok = []
         for d in dias_verdes:
-            d["en_lista_espera"] = False
-            dias_temporal_ok.append(d)
+            if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=False):
+                d["en_lista_espera"] = False
+                dias_temporal_ok.append(d)
         for d in dias_espera:
-            d["en_lista_espera"] = True
-            dias_temporal_ok.append(d)
+            if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=True):
+                d["en_lista_espera"] = True
+                dias_temporal_ok.append(d)
 
         if not dias_temporal_ok:
-            print("      · sin días (ni verdes ni de lista de espera)")
+            if not dias_verdes and not dias_espera:
+                print("      · sin días (ni verdes ni de lista de espera)")
+            else:
+                print(f"      · sin días (había días, pero fuera de {sorted(MESES_TURISMOSOCIAL)})")
 
         dias_todos = []
         for d in dias_temporal_ok:
@@ -1492,31 +1504,23 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                     print(f"      ⏭ [TURISMOSOCIAL] Omito reserva (no es 4★): {linea[:70]}")
                     continue
 
-                # 2) Si es lista de espera, exigir posición ≤ MAX_POSICION_LISTA_ESPERA
-                pos = None
-                if d.get("en_lista_espera"):
-                    pos = extraer_posicion_lista_espera(
-                        linea, " ".join(d.get("detalle", [])))
-                    if pos is None:
-                        print(f"      ⏭ [TURISMOSOCIAL] Omito lista de espera "
-                              f"(sin posición detectada): {linea[:70]}")
-                        continue
-                    if pos > MAX_POSICION_LISTA_ESPERA:
-                        print(f"      ⏭ [TURISMOSOCIAL] Omito lista de espera "
-                              f"(posición {pos} > {MAX_POSICION_LISTA_ESPERA}): {linea[:70]}")
-                        continue
+                # 2) ¿Estancia de 10 días?
+                dias = extraer_dias_estancia(linea, " ".join(d.get("detalle", [])))
+                if dias is None or dias != DIAS_ESTANCIA_TS:
+                    print(f"      ⏭ [TURISMOSOCIAL] Omito reserva "
+                          f"(estancia {dias if dias is not None else '?'} días ≠ {DIAS_ESTANCIA_TS}): "
+                          f"{linea[:70]}")
+                    continue
 
-                # 3) Reservar (sin restricción de mes)
+                # 3) Lista de espera: cualquier posición vale (sin restricción)
                 if not debe_reservar_turismosocial(
                         d.get("mes", ""),
-                        en_lista_espera=d.get("en_lista_espera", False),
-                        posicion=pos):
+                        en_lista_espera=d.get("en_lista_espera", False)):
                     continue
 
                 tipo = "espera" if d.get("en_lista_espera") else "disponible"
-                extra_pos = f" pos={pos}" if pos is not None else ""
-                print(f"      ↪ [TURISMOSOCIAL:{tipo}{extra_pos}] Reserva día {d['dia']} de "
-                      f"{d['mes']} ({zona}/{provincia})")
+                print(f"      ↪ [TURISMOSOCIAL:{tipo}] Reserva día {d['dia']} de "
+                      f"{d['mes']} ({zona}/{provincia}) · {dias} días")
                 ok = intentar_reserva(page, context, linea, debug)
                 print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
                 try:
@@ -1632,8 +1636,10 @@ def comprobar(debug=False, solo=None):
         for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
             if d == dest:
                 print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
-    print("→ TurismoSocial: sin restricción de mes")
-    print(f"→ TurismoSocial: lista de espera solo si posición ≤ {MAX_POSICION_LISTA_ESPERA}")
+    print("→ TurismoSocial: zonas =", ZONAS_TURISMOSOCIAL)
+    print(f"→ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abril–octubre)")
+    print(f"→ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} días")
+    print("→ TurismoSocial: lista de espera SIN restricción de posición")
     if SOLO_RESERVAR_4_ESTRELLAS:
         print("⚠️  SOLO_RESERVAR_4_ESTRELLAS = True → solo se reservará si el hotel es 4★")
     if PROBAR_EMAIL_SIN_FILTRO:
@@ -1792,7 +1798,9 @@ def comprobar(debug=False, solo=None):
                     "hacer_reserva": HACER_RESERVA,
                     "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
                     "solo_reservar_4_estrellas": SOLO_RESERVAR_4_ESTRELLAS,
-                    "max_posicion_lista_espera": MAX_POSICION_LISTA_ESPERA,
+                    "meses_permitidos": sorted(MESES_TURISMOSOCIAL),
+                    "dias_estancia_requeridos": DIAS_ESTANCIA_TS,
+                    "zonas_comprobadas": ZONAS_TURISMOSOCIAL,
                     "combos_comprobados": [
                         {"destino": z, "provincia": p} for z, p in combos_ts
                     ],
