@@ -1,13 +1,13 @@
 """
-Comprueba la disponibilidad en https://www.mundicolor.es/availability
-(Imserso / Mundicolor) para los destinos/provincias configurados.
+Comprueba la disponibilidad en:
+  1) https://www.mundicolor.es/availability      (Imserso / Mundicolor)
+  2) https://www.turismosocial.es/availability   (Turismo Social)
 
 - LOG en consola: muestra TODOS los días disponibles de cada combo.
-- EMAIL: solo se envía si algún día tiene un hotel de HOTELES_OBJETIVO.
+- EMAIL: se envía UNA SOLA VEZ al final, con el resumen de las dos webs.
 - RESERVA: si HACER_RESERVA=True, al detectar un hotel (objetivo o cualquiera
            si PROBAR_RESERVA_SIN_FILTRO=True) pulsa SELECCIONAR, marca
-           checkboxes y pulsa FINALIZAR RESERVA. Solo para días que cumplan
-           FILTRO_RESERVA_POR_DESTINO (o FILTRO_RESERVA_POR_PROVINCIA si aplica).
+           checkboxes y pulsa FINALIZAR RESERVA.
 
 Uso:
     python mundicolor_disponibilidad.py                     # una pasada
@@ -29,7 +29,9 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
-URL = "https://www.mundicolor.es/availability"
+URL_MUNDICOLOR     = "https://www.mundicolor.es/availability"
+URL_TURISMOSOCIAL  = "https://www.turismosocial.es/availability"
+URL = URL_MUNDICOLOR  # alias legacy
 
 # ----------------------------- DATOS ---------------------------------
 PASAJEROS = [
@@ -43,7 +45,7 @@ LOCALIDAD = "Cualquiera"
 NUM_DIAS = "Cualquiera"
 # ---------------------------------------------------------------------
 
-# -------------------- COMBOS DESTINO / PROVINCIA ---------------------
+# -------------------- COMBOS MUNDICOLOR ------------------------------
 COMBOS = [
     ("BALEARES", "MALLORCA"),
     ("BALEARES", "MENORCA"),
@@ -52,6 +54,25 @@ COMBOS = [
     ("CANARIAS", "TENERIFE"),
     ("CANARIAS", "FUERTEVENTURA"),
 ]
+# ---------------------------------------------------------------------
+
+# -------------------- COMBOS TURISMOSOCIAL ---------------------------
+ZONAS_TURISMOSOCIAL = ["Capitales de provincia", "Costas"]
+PROVINCIAS_TURISMOSOCIAL = [
+    "Alicante",
+    "Almería",
+    "Cadiz",
+    "Gran Canaria",
+    "Granada",
+    "Huelva",
+    "I. Mallorca",
+    "Madrid",
+    "Málaga",
+    "Murcia",
+    "Santa Cruz de Tenerife",
+]
+# Solo nos interesan hoteles disponibles de marzo a junio (cualquier año)
+MESES_TURISMOSOCIAL = {3, 4, 5, 6}
 # ---------------------------------------------------------------------
 
 # ----------------- HOTELES OBJETIVO (whitelist) ----------------------
@@ -76,24 +97,17 @@ HACER_RESERVA = True
 PROBAR_RESERVA_SIN_FILTRO = True
 # ---------------------------------------------------------------------
 
-# ------------- FILTRO TEMPORAL PARA MOSTRAR / EMAIL ------------------
-# BALEARES: 2027, meses 3-10  ·  CANARIAS: sin filtro (cualquier mes)
+# ------------- FILTRO TEMPORAL MUNDICOLOR (email) --------------------
 FILTRO_POR_DESTINO = {
     "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6, 7, 8, 9, 10}},
     "CANARIAS": None,
 }
 
-# ------------- FILTRO TEMPORAL SOLO PARA RESERVAR --------------------
-# BALEARES: abril 2027 (por defecto)
-#   → IBIZA y MENORCA: marzo + abril 2027 (override por provincia)
-#   → MALLORCA: solo abril 2027
-# CANARIAS: marzo, abril, mayo, junio, octubre, noviembre 2027
 FILTRO_RESERVA_POR_DESTINO = {
     "BALEARES": {"anio": 2027, "meses": {4, 5, 6}},
     "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
 }
 
-# Overrides por (destino, provincia). Si existe, sustituye al filtro del destino.
 FILTRO_RESERVA_POR_PROVINCIA = {
     ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {4, 5, 6}},
     ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {4, 5, 6}},
@@ -170,20 +184,25 @@ def hotel_match_estricto(linea):
 
 
 def debe_reservar(destino, provincia, mes_str):
-    """
-    Devuelve True si el día (destino + provincia + mes/año) cumple el filtro.
-    Primero mira override por provincia; si no, usa el filtro del destino.
-    """
+    """Mundicolor: ¿este día cumple el filtro de reserva?"""
     f = FILTRO_RESERVA_POR_PROVINCIA.get((destino.upper(), (provincia or "").upper()))
     if f is None:
         f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
     if f is None:
-        return False  # sin regla definida → no reservar
+        return False
     ma = mes_anio(mes_str)
     if not ma:
         return False
     anio, mes = ma
     return anio == f["anio"] and mes in f["meses"]
+
+
+def debe_reservar_turismosocial(mes_str):
+    """TurismoSocial: solo marzo–junio, cualquier año."""
+    ma = mes_anio(mes_str)
+    if not ma:
+        return False
+    return ma[1] in MESES_TURISMOSOCIAL
 
 
 # ---------------------------------------------------------------------
@@ -422,6 +441,41 @@ FALLBACK_DNI = ["input#addPaxIpt", 'input[name*="dni" i]', 'input[id*="dni" i]',
 FALLBACK_CLAVE = ["input#addPaxPasswordIpt", 'input[type="password"]', 'input[name*="clave" i]', 'input[id*="clave" i]']
 
 
+def _login_pasajeros(page, debug=False):
+    try:
+        page.locator("#addPaxIpt").first.wait_for(state="visible", timeout=10000)
+    except Exception:
+        pass
+
+    for i, p in enumerate(PASAJEROS, 1):
+        print(f"      Login pasajero {i} ({p['dni']})…")
+        rellenar_campo(page, re.compile(r"DNI", re.I),   p["dni"],   FALLBACK_DNI,   debug)
+        rellenar_campo(page, re.compile(r"Clave", re.I), p["clave"], FALLBACK_CLAVE, debug)
+        page.get_by_text("Añadir", exact=False).first.click()
+        page.wait_for_timeout(600)
+        err = page.get_by_text(re.compile(r"ya ha sido introducido|no es válido", re.I)).first
+        if err.count() and err.is_visible():
+            raise RuntimeError(f"La web rechaza al pasajero {i} ({p['dni']}): '{err.inner_text()}'")
+
+
+def _desmarcar_mascotas(page):
+    if not MASCOTAS:
+        try:
+            page.locator("input#with-pets-accreditation").uncheck(timeout=2000)
+        except Exception:
+            pass
+
+
+def _pulsar_buscar(page):
+    try:
+        page.locator("#product-searcher-btn-accreditation").click(timeout=5000)
+    except Exception:
+        page.get_by_role("button", name=re.compile(r"buscar|consultar|disponibilidad", re.I)).first.click()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(2500)
+
+
+# ------------------ MUNDICOLOR: aplicar combos ----------------------
 def aplicar_destino_provincia_y_buscar(page, destino, provincia, debug):
     elegir_select(page, "#destination-accreditation", destino, obligatorio=True, debug=debug)
     esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
@@ -439,17 +493,12 @@ def aplicar_destino_provincia_y_buscar(page, destino, provincia, debug):
     except Exception:
         pass
 
-    try:
-        page.locator("#product-searcher-btn-accreditation").click(timeout=5000)
-    except Exception:
-        page.get_by_role("button", name=re.compile(r"buscar|consultar|disponibilidad", re.I)).first.click()
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(2500)
+    _pulsar_buscar(page)
 
 
 def flujo_completo(page, destino, provincia, debug, con_login=True):
-    print("   → Abriendo la web…")
-    page.goto(URL, wait_until="networkidle")
+    print("   → Abriendo Mundicolor…")
+    page.goto(URL_MUNDICOLOR, wait_until="networkidle")
     page.wait_for_timeout(1500)
 
     cookies(page, debug=debug)
@@ -457,26 +506,9 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
     cookies(page, debug=debug)
 
     if con_login:
-        try:
-            page.locator("#addPaxIpt").first.wait_for(state="visible", timeout=10000)
-        except Exception:
-            pass
+        _login_pasajeros(page, debug)
 
-        for i, p in enumerate(PASAJEROS, 1):
-            print(f"      Login pasajero {i} ({p['dni']})…")
-            rellenar_campo(page, re.compile(r"DNI", re.I),   p["dni"],   FALLBACK_DNI,   debug)
-            rellenar_campo(page, re.compile(r"Clave", re.I), p["clave"], FALLBACK_CLAVE, debug)
-            page.get_by_text("Añadir", exact=False).first.click()
-            page.wait_for_timeout(600)
-            err = page.get_by_text(re.compile(r"ya ha sido introducido|no es válido", re.I)).first
-            if err.count() and err.is_visible():
-                raise RuntimeError(f"La web rechaza al pasajero {i} ({p['dni']}): '{err.inner_text()}'")
-
-    if not MASCOTAS:
-        try:
-            page.locator("input#with-pets-accreditation").uncheck(timeout=2000)
-        except Exception:
-            pass
+    _desmarcar_mascotas(page)
 
     print(f"      Transporte = '{TRANSPORTE}'")
     elegir_select(page, "#transport-accreditation", TRANSPORTE, obligatorio=True, debug=debug)
@@ -487,6 +519,44 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
         pass
 
     aplicar_destino_provincia_y_buscar(page, destino, provincia, debug)
+
+
+# ------------- TURISMOSOCIAL: flujo y combos -------------------------
+def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
+    print("   → Abriendo TurismoSocial…")
+    page.goto(URL_TURISMOSOCIAL, wait_until="networkidle")
+    page.wait_for_timeout(1500)
+
+    cookies(page, debug=debug)
+    esperar_captcha(page, debug=debug)
+    cookies(page, debug=debug)
+
+    if con_login:
+        _login_pasajeros(page, debug)
+
+    _desmarcar_mascotas(page)
+
+    print(f"      Transporte = '{TRANSPORTE}'")
+    elegir_select(page, "#transport-accreditation", TRANSPORTE, obligatorio=True, debug=debug)
+
+    # Zona de destino (Capitales de provincia / Costas)
+    print(f"      Zona de destino = '{zona}'")
+    elegir_select(page, "#destination-accreditation", zona, obligatorio=True, debug=debug)
+    esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
+
+    # Provincia (si no existe para esa zona, abortamos este combo)
+    print(f"      Provincia = '{provincia}'")
+    try:
+        elegir_select(page, "#province-accreditation", provincia, obligatorio=True, debug=debug)
+    except Exception as e:
+        print(f"      ✗ Provincia '{provincia}' no disponible en zona '{zona}': {e}")
+        return False
+
+    # NO tocar Localidad ni No días (dejar por defecto)
+    # NO tocar origen (no requerido)
+
+    _pulsar_buscar(page)
+    return True
 
 
 # ---------------------------------------------------------------------
@@ -670,7 +740,7 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
 
 
 # ---------------------------------------------------------------------
-# UNA PASADA DE UN COMBO
+# MUNDICOLOR: una pasada de un combo
 # ---------------------------------------------------------------------
 def comprobar_combo(page, context, destino, provincia, debug, primera=False):
     try:
@@ -718,14 +788,12 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 
             # ==== RESERVA ====
             if HACER_RESERVA:
-                # 1) ¿Este día (destino + provincia + mes) cumple el filtro de reserva?
                 if not debe_reservar(destino, provincia, d.get("mes", "")):
                     if debug:
                         print(f"      · Reserva NO: día {d['dia']} de {d['mes']} no cumple filtro "
                               f"({descripcion_filtro_reserva(destino, provincia)})")
                     continue
 
-                # 2) ¿Qué línea reservar?
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
                     if detalle:
@@ -742,7 +810,7 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                     continue
 
                 for linea in lineas_a_reservar:
-                    print(f"      ↪ Reserva solicitada para día {d['dia']} de {d['mes']} "
+                    print(f"      ↪ [MUNDICOLOR] Reserva día {d['dia']} de {d['mes']} "
                           f"({destino}/{provincia}, filtro {descripcion_filtro_reserva(destino, provincia)})")
                     ok = intentar_reserva(page, context, linea, debug)
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
@@ -759,6 +827,102 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
         print(f"   [combo ERROR] {destino}/{provincia}: {e}", file=sys.stderr)
         try:
             page.screenshot(path=str(OUT_DIR / f"error_{destino}_{provincia}.png"), full_page=True)
+        except Exception:
+            pass
+        return []
+
+
+# ---------------------------------------------------------------------
+# TURISMOSOCIAL: una pasada de un combo
+# ---------------------------------------------------------------------
+def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera=False):
+    try:
+        if primera:
+            ok = flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True)
+            if not ok:
+                return []
+        else:
+            try:
+                form_ok = page.locator("#destination-accreditation").first.is_visible(timeout=2000)
+            except Exception:
+                form_ok = False
+
+            if form_ok:
+                print("      (formulario ya cargado: solo cambio zona/provincia y BUSCAR)")
+                try:
+                    elegir_select(page, "#destination-accreditation", zona,
+                                  obligatorio=True, debug=debug)
+                    esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
+                    elegir_select(page, "#province-accreditation", provincia,
+                                  obligatorio=True, debug=debug)
+                    _pulsar_buscar(page)
+                except Exception as e:
+                    print(f"      (reintento de combo TS falló: {e}; hago flujo completo sin login)")
+                    if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=False):
+                        return []
+            else:
+                print("      (no veo el formulario, hago flujo completo sin login)")
+                if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=False):
+                    return []
+
+        dias = page.evaluate(JS_DIAS_VERDES)
+
+        # Filtro temporal turismosocial: solo meses marzo–junio
+        dias_temporal_ok = []
+        for d in dias:
+            if debe_reservar_turismosocial(d.get("mes", "")):
+                dias_temporal_ok.append(d)
+
+        dias_todos = []
+        for d in dias_temporal_ok:
+            detalle = detalle_dia(page, d["idx"])
+            hoteles_encontrados = set()
+            for linea in detalle:
+                h = hotel_match(linea)
+                if h:
+                    hoteles_encontrados.add(h)
+            d["detalle"] = detalle
+            d["destino"] = zona
+            d["provincia"] = provincia
+            d["hoteles_objetivo"] = sorted(hoteles_encontrados)
+            d["es_objetivo"] = bool(hoteles_encontrados)
+            dias_todos.append(d)
+
+            # ==== RESERVA ====
+            if HACER_RESERVA and debe_reservar_turismosocial(d.get("mes", "")):
+                lineas_a_reservar = []
+                if PROBAR_RESERVA_SIN_FILTRO:
+                    if detalle:
+                        lineas_a_reservar = [detalle[0]]
+                else:
+                    for linea in detalle:
+                        if hotel_match_estricto(linea):
+                            lineas_a_reservar = [linea]
+                            break
+
+                if not lineas_a_reservar:
+                    if debug:
+                        print(f"      · Reserva TS NO: día {d['dia']} sin hotel que cumpla")
+                    continue
+
+                for linea in lineas_a_reservar:
+                    print(f"      ↪ [TURISMOSOCIAL] Reserva día {d['dia']} de {d['mes']} "
+                          f"({zona}/{provincia}, meses {sorted(MESES_TURISMOSOCIAL)})")
+                    ok = intentar_reserva(page, context, linea, debug)
+                    print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
+
+                    try:
+                        if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
+                            print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
+                            return dias_todos
+                    except Exception:
+                        pass
+
+        return dias_todos
+    except Exception as e:
+        print(f"   [combo TS ERROR] {zona}/{provincia}: {e}", file=sys.stderr)
+        try:
+            page.screenshot(path=str(OUT_DIR / f"error_ts_{zona}_{provincia}.png"), full_page=True)
         except Exception:
             pass
         return []
@@ -787,10 +951,14 @@ def enviar_email(asunto, cuerpo, debug=False):
         return False
 
 
-def construir_cuerpo(res):
+def _seccion_cuerpo(res_seccion, titulo):
     lineas = []
-    lineas.append(f"Consulta: {res['fecha_consulta']}")
-    objetivos = res.get("disponibles_objetivo", [])
+    lineas.append(f"=== {titulo} ===")
+    if not res_seccion:
+        lineas.append("(sin datos)")
+        return "\n".join(lineas)
+
+    objetivos = res_seccion.get("disponibles_objetivo", [])
     lineas.append(f"Total días con hoteles objetivo: {len(objetivos)}")
     if PROBAR_EMAIL_SIN_FILTRO:
         lineas.append("(MODO PRUEBA: se han aceptado TODOS los hoteles, no solo los objetivo)")
@@ -806,14 +974,30 @@ def construir_cuerpo(res):
         return "\n".join(lineas)
 
     for zona, dias in zonas.items():
-        lineas.append(f"=== {zona} === ({len(dias)} día/s)")
+        lineas.append(f"  --- {zona} --- ({len(dias)} día/s)")
         for d in dias:
             hoteles = ", ".join(d.get("hoteles_objetivo", []))
-            lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
+            lineas.append(f"    • Día {d['dia']} de {d['mes']}   [{hoteles}]")
             for l in d["detalle"]:
                 if hotel_match(l):
-                    lineas.append(f"      {l}")
+                    lineas.append(f"        {l}")
         lineas.append("")
+    return "\n".join(lineas)
+
+
+def construir_cuerpo_combinado(res):
+    lineas = []
+    lineas.append(f"Consulta: {res['fecha_consulta']}")
+    lineas.append("")
+    lineas.append("=" * 60)
+    lineas.append("MUNDICOLOR")
+    lineas.append("=" * 60)
+    lineas.append(_seccion_cuerpo(res.get("mundicolor"), "MUNDICOLOR"))
+    lineas.append("")
+    lineas.append("=" * 60)
+    lineas.append("TURISMOSOCIAL")
+    lineas.append("=" * 60)
+    lineas.append(_seccion_cuerpo(res.get("turismosocial"), "TURISMOSOCIAL"))
     return "\n".join(lineas)
 
 
@@ -830,12 +1014,13 @@ def comprobar(debug=False, solo=None):
 
     print("→ Lanzando Chromium…")
     print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
-    print("→ Filtro RESERVA por destino:")
+    print("→ Filtro RESERVA por destino (Mundicolor):")
     for dest in ("BALEARES", "CANARIAS"):
         print(f"     {dest}: {descripcion_filtro_reserva(dest)}")
         for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
             if d == dest:
                 print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
+    print(f"→ TurismoSocial: meses de interés = {sorted(MESES_TURISMOSOCIAL)}")
     if PROBAR_EMAIL_SIN_FILTRO:
         print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
     if HACER_RESERVA:
@@ -871,7 +1056,9 @@ def comprobar(debug=False, solo=None):
 
         page = context.new_page()
         try:
-            print(f"\n→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
+            # ============ MUNDICOLOR ============
+            print(f"\n{'=' * 25} MUNDICOLOR {'=' * 25}")
+            print(f"→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
             todos = []
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
@@ -900,7 +1087,7 @@ def comprobar(debug=False, solo=None):
                     return None
                 return {"anio": f["anio"], "meses": sorted(f["meses"])}
 
-            resultado = {
+            resultado_mundi = {
                 "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
                 "hoteles_objetivo": HOTELES_OBJETIVO,
                 "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
@@ -925,6 +1112,59 @@ def comprobar(debug=False, solo=None):
                 "disponibles": todos,
                 "disponibles_objetivo": todos_objetivo,
             }
+
+            # ============ TURISMOSOCIAL ============
+            if solo:
+                print("\n(flag --solo activo: se omite TurismoSocial)")
+                resultado_ts = None
+            else:
+                combos_ts = [(z, p) for z in ZONAS_TURISMOSOCIAL for p in PROVINCIAS_TURISMOSOCIAL]
+                print(f"\n{'=' * 25} TURISMOSOCIAL {'=' * 25}")
+                print(f"→ {len(combos_ts)} combinaciones a comprobar (misma pestaña)\n")
+
+                todos_ts = []
+                todos_objetivo_ts = []
+                for i, (zona, prov) in enumerate(combos_ts, 1):
+                    print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  · filtro reserva: meses {sorted(MESES_TURISMOSOCIAL)}")
+                    dias = comprobar_combo_turismosocial(
+                        page, context, zona, prov, debug, primera=(i == 1)
+                    )
+
+                    if not dias:
+                        print("      · sin días")
+                    else:
+                        for d in dias:
+                            hoteles = d.get("hoteles_objetivo", [])
+                            if hoteles:
+                                print(f"      🟢 Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
+                            else:
+                                print(f"      ⚪ Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
+                            for l in d["detalle"]:
+                                prefijo = "          · " if not hotel_match(l) else "          ★ "
+                                print(f"{prefijo}{l}")
+
+                    todos_ts.extend(dias)
+                    todos_objetivo_ts.extend([d for d in dias if d.get("es_objetivo")])
+
+                resultado_ts = {
+                    "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
+                    "hoteles_objetivo": HOTELES_OBJETIVO,
+                    "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
+                    "hacer_reserva": HACER_RESERVA,
+                    "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
+                    "meses_interes": sorted(MESES_TURISMOSOCIAL),
+                    "combos_comprobados": [
+                        {"destino": z, "provincia": p} for z, p in combos_ts
+                    ],
+                    "disponibles": todos_ts,
+                    "disponibles_objetivo": todos_objetivo_ts,
+                }
+
+            resultado = {
+                "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
+                "mundicolor": resultado_mundi,
+                "turismosocial": resultado_ts,
+            }
             (OUT_DIR / "ultimo_resultado.json").write_text(
                 json.dumps(resultado, ensure_ascii=False, indent=2), encoding="utf-8")
             return resultado
@@ -932,34 +1172,51 @@ def comprobar(debug=False, solo=None):
             print(f"[ERROR] {e}", file=sys.stderr)
             return None
         finally:
-            page.close()
-            context.close()
-            browser.close()
+            try:
+                page.close()
+            except Exception:
+                pass
+            try:
+                context.close()
+            except Exception:
+                pass
+            try:
+                browser.close()
+            except Exception:
+                pass
 
 
 def mostrar(res, debug=False):
     if res is None:
         return
-    n_total = len(res["disponibles"])
-    n_obj = len(res["disponibles_objetivo"])
+    res_mundi = res.get("mundicolor") or {}
+    res_ts = res.get("turismosocial") or {}
 
-    print(f"\n[{res['fecha_consulta']}] Días disponibles: {n_total}  ·  con hotel objetivo: {n_obj}")
+    n_obj_mundi = len(res_mundi.get("disponibles_objetivo", []))
+    n_obj_ts = len(res_ts.get("disponibles_objetivo", [])) if res_ts else 0
+    n_obj_total = n_obj_mundi + n_obj_ts
 
-    if n_obj == 0:
-        print("→ Sin hoteles objetivo: no se envía email.")
+    print(f"\n[{res['fecha_consulta']}]")
+    print(f"  Mundicolor    : {n_obj_mundi} día(s) con hotel objetivo")
+    print(f"  TurismoSocial : {n_obj_ts} día(s) con hotel objetivo")
+
+    # Email único al final
+    if n_obj_total == 0 and not PROBAR_EMAIL_SIN_FILTRO:
+        print("→ Sin hoteles objetivo en ninguna web: no se envía email.")
         if not EMAIL_SOLO_SI_HAY:
             enviar_email(
-                "Mundicolor: sin disponibilidad en hoteles objetivo",
-                construir_cuerpo(res),
+                "Imserso: sin disponibilidad en hoteles objetivo",
+                construir_cuerpo_combinado(res),
                 debug=debug,
             )
         return
 
-    print(f"\n→ ¡HAY {n_obj} día(s) con hoteles objetivo! Enviando email…")
-    asunto = f"🟢 Mundicolor: {n_obj} día(s) con hoteles objetivo"
+    print(f"\n→ Enviando email resumen (Mundicolor + TurismoSocial)…")
     if PROBAR_EMAIL_SIN_FILTRO:
-        asunto = f"🧪 [PRUEBA] Mundicolor: {n_obj} día(s) disponibles"
-    enviar_email(asunto, construir_cuerpo(res), debug=debug)
+        asunto = f"🧪 [PRUEBA] Imserso: resumen disponibilidad (M:{n_obj_mundi} / TS:{n_obj_ts})"
+    else:
+        asunto = f"🟢 Imserso: {n_obj_total} día(s) con hoteles objetivo (M:{n_obj_mundi} / TS:{n_obj_ts})"
+    enviar_email(asunto, construir_cuerpo_combinado(res), debug=debug)
 
 
 if __name__ == "__main__":
@@ -969,7 +1226,8 @@ if __name__ == "__main__":
     ap.add_argument("--debug", action="store_true",
                     help="navegador visible + capturas")
     ap.add_argument("--solo", metavar="DESTINO",
-                    help="comprobar solo un destino, p.ej. --solo BALEARES")
+                    help="comprobar solo un destino de Mundicolor, p.ej. --solo BALEARES "
+                         "(omite TurismoSocial)")
     args = ap.parse_args()
 
     while True:
