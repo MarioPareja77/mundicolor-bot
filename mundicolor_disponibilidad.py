@@ -89,7 +89,7 @@ FILTRO_POR_DESTINO = {
 #   → MALLORCA: solo abril 2027
 # CANARIAS: marzo, abril, mayo, junio, octubre, noviembre 2027
 FILTRO_RESERVA_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6}},
+    "BALEARES": {"anio": 2027, "meses": {4, 5, 6}},
     "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
 }
 
