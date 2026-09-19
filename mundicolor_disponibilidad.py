@@ -16,7 +16,7 @@ import smtplib
 import sys
 import time
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pathlib import Path
@@ -26,6 +26,18 @@ from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 URL_MUNDICOLOR     = "https://www.mundicolor.es/availability"
 URL_TURISMOSOCIAL  = "https://www.turismosocial.es/availability"
 URL = URL_MUNDICOLOR  # alias legacy
+
+# ---------- ZONA HORARIA (GMT+2, península) ----------
+TZ_ES = timezone(timedelta(hours=2))
+
+
+def ahora_es():
+    return datetime.now(TZ_ES)
+
+
+def ahora_es_str():
+    return ahora_es().strftime("%Y-%m-%d %H:%M:%S (GMT+2)")
+
 
 # ----------------------------- DATOS ---------------------------------
 PASAJEROS = [
@@ -83,8 +95,8 @@ HOTELES_OBJETIVO = [
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
     # --- nuevos ---
-    "BERGANTIN",
-    "MAR AMANTIS",
+    "Bergantin",
+    "Mar Amantis",
     "Club Hotel Aguamarina",
     "BLUESEA Aloe Corralejo",
     "BLUESEA Club Caleta Dorada",
@@ -221,7 +233,7 @@ def _cerrar_modales(page, debug=False, max_iter=5):
 # ---------------------------------------------------------------------
 def _dump_debug(page, name):
     try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = ahora_es().strftime("%Y%m%d_%H%M%S")
         base = OUT_DIR / f"debug_{name}_{ts}"
         try:
             base.with_suffix(".html").write_text(page.content(), encoding="utf-8")
@@ -421,7 +433,7 @@ def cookies(page, debug=False):
     if exito:
         try:
             COOKIES_FILE.write_text(
-                json.dumps({"aceptadas": True, "fecha": datetime.now().isoformat()},
+                json.dumps({"aceptadas": True, "fecha": ahora_es().isoformat()},
                            ensure_ascii=False),
                 encoding="utf-8")
         except Exception:
@@ -853,7 +865,6 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     page.wait_for_timeout(1500)
 
-    # NUEVO: mostrar provincias de esta zona
     try:
         opts_prov = _listar_opciones_select(page, "#province-accreditation")
         print(f"      [TS] Provincias disponibles en '{zona}': {opts_prov}")
@@ -907,6 +918,59 @@ JS_DIAS_VERDES = """
 }
 """
 
+# --- Extrae SOLO hoteles con botón SELECCIONAR visible ---
+JS_HOTELES_DISPONIBLES = r"""
+() => {
+  const out = [];
+  const seen = new Set();
+  const limpiar = (s) => (s || '').replace(/\s+/g, ' ').trim();
+  const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[áa]s|no|s[ií]|ok|cerrar|reservar)$/i.test(l);
+
+  const todos = [...document.querySelectorAll(
+    'button, a, [role="button"], input[type="button"], input[type="submit"]'
+  )];
+  const botones = todos.filter(b => {
+    if (b.offsetParent === null) return false;
+    const t = limpiar(b.innerText || b.textContent || b.value);
+    return /^seleccionar$/i.test(t);
+  });
+
+  for (const b of botones) {
+    let cont = b.parentElement;
+    let nivel = 0;
+    while (cont && nivel < 8) {
+      const txt = cont.innerText || '';
+      if (/€/.test(txt) && txt.length < 3000) break;
+      cont = cont.parentElement;
+      nivel++;
+    }
+    if (!cont) continue;
+
+    const txt = cont.innerText || '';
+    const lineas = txt.split(/\n+/).map(limpiar).filter(l => l && !esBasura(l));
+    if (!lineas.length) continue;
+
+    const nombre = lineas[0];
+    if (!nombre || seen.has(nombre)) continue;
+    seen.add(nombre);
+
+    const precioM = txt.match(/(\d{2,5}(?:[.,]\d{1,2})?)\s*€/);
+    const precio = precioM ? (precioM[1] + ' €') : '';
+
+    const extras = lineas.slice(1)
+      .filter(l => !/\d+\s*€/.test(l))
+      .slice(0, 3);
+
+    out.push({
+      nombre: nombre,
+      precio: precio,
+      linea: [nombre, ...extras, precio].filter(Boolean).join(' | ')
+    });
+  }
+  return out;
+}
+"""
+
 
 def mes_anio(mes_str):
     if not mes_str:
@@ -941,6 +1005,10 @@ def descripcion_filtro_reserva(destino, provincia=None):
 
 
 def detalle_dia(page, idx, debug=False):
+    """
+    Devuelve SOLO los hoteles disponibles (con botón SELECCIONAR visible)
+    para el día `idx`. Cada elemento: "Nombre | Extras | Precio €".
+    """
     _cerrar_modales(page, debug=debug)
     loc = page.locator(f'[data-libre="{idx}"]').first
     try:
@@ -955,12 +1023,20 @@ def detalle_dia(page, idx, debug=False):
             return []
     page.wait_for_timeout(1800)
     _cerrar_modales(page, debug=debug)
-    lineas = [l.strip() for l in page.locator("body").inner_text().splitlines() if l.strip()]
-    res = []
-    for i, l in enumerate(lineas):
-        if "€" in l:
-            res.append(" | ".join(lineas[max(0, i - 2): i + 1]))
-    return res[:10]
+
+    try:
+        hoteles = page.evaluate(JS_HOTELES_DISPONIBLES)
+    except Exception as e:
+        if debug:
+            print(f"      [debug] extractor hoteles disponibles falló: {e}")
+        return []
+
+    lineas = []
+    for h in hoteles:
+        linea = (h.get("linea") or h.get("nombre") or "").strip()
+        if linea:
+            lineas.append(linea)
+    return lineas[:15]
 
 
 # ---------------------------------------------------------------------
@@ -970,8 +1046,8 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
     _cerrar_modales(page, debug=debug)
     print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
     try:
-        partes = [p.strip() for p in linea_hotel.split("|")]
-        nombre_hotel = partes[1] if len(partes) > 1 else partes[0]
+        partes = [p.strip() for p in linea_hotel.split("|") if p.strip()]
+        nombre_hotel = partes[0] if partes else linea_hotel[:60]
         print(f"      (nombre a buscar: '{nombre_hotel}')")
         fila = None
         for sel in ["tr", "li", "div"]:
@@ -1178,7 +1254,6 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 return None
             page.wait_for_timeout(1500)
 
-            # NUEVO: log provincias de esta zona
             try:
                 opts_prov = _listar_opciones_select(page, "#province-accreditation")
                 print(f"      [TS] Provincias disponibles en '{zona}': {opts_prov}")
@@ -1206,13 +1281,11 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
         _cerrar_modales(page, debug=debug)
         dias = page.evaluate(JS_DIAS_VERDES)
 
-        # ---- NUEVO: información en crudo ----
         print(f"      [TS] días verdes en crudo (sin filtrar por meses): {len(dias)}")
         if dias:
             meses_detectados = sorted({(d.get('mes') or '?') for d in dias})
             print(f"      [TS] meses detectados: {meses_detectados[:12]}")
         _diagnostico_resultado_ts(page, debug=debug)
-        # -------------------------------------
 
         dias_temporal_ok = []
         for d in dias:
@@ -1293,23 +1366,39 @@ def enviar_email(asunto, cuerpo, debug=False):
         return False
 
 
-def _seccion_cuerpo(res_seccion):
+def _seccion_cuerpo(res_seccion, combos):
+    """
+    Recorre TODOS los combos comprobados y, dentro de cada uno,
+    muestra los días disponibles (si los hay). Sin contadores, sin MODO PRUEBA,
+    sin 'ver detalles' / 'No'.
+    """
+    if not res_seccion:
+        return "(sin datos)"
+
+    dias = res_seccion.get("disponibles", []) or []
+    por_combo = {}
+    for d in dias:
+        key = (d.get("destino", ""), (d.get("provincia") or ""))
+        por_combo.setdefault(key, []).append(d)
+
     lineas = []
-    objetivos = (res_seccion or {}).get("disponibles_objetivo", [])
-    zonas = {}
-    for d in objetivos:
-        key = f"{d.get('destino','?')} / {d.get('provincia') or '(sin provincia)'}"
-        zonas.setdefault(key, []).append(d)
-    if not zonas:
-        lineas.append("(Sin disponibilidad en hoteles objetivo.)")
-        return "\n".join(lineas)
-    for zona, dias in zonas.items():
-        lineas.append(f"--- {zona} ---")
-        for d in dias:
-            hoteles = ", ".join(d.get("hoteles_objetivo", []))
-            lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
-            for l in d["detalle"]:
-                if hotel_match(l):
+    for combo in combos:
+        dest = combo.get("destino", "?")
+        prov = combo.get("provincia", "") or "(sin provincia)"
+        key = (dest, (combo.get("provincia") or ""))
+        dias_combo = por_combo.get(key, [])
+
+        lineas.append(f"--- {dest} / {prov} ---")
+        if not dias_combo:
+            lineas.append("  (sin días disponibles)")
+        else:
+            for d in dias_combo:
+                hoteles = ", ".join(d.get("hoteles_objetivo", []))
+                if hoteles:
+                    lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
+                else:
+                    lineas.append(f"  • Día {d['dia']} de {d['mes']}")
+                for l in d.get("detalle", []):
                     lineas.append(f"      {l}")
         lineas.append("")
     return "\n".join(lineas)
@@ -1317,14 +1406,20 @@ def _seccion_cuerpo(res_seccion):
 
 def construir_cuerpo_combinado(res):
     sep = "=" * 60
+    res_mundi = res.get("mundicolor") or {}
+    res_ts = res.get("turismosocial") or {}
+
+    combos_mundi = res_mundi.get("combos_comprobados", [])
+    combos_ts = (res_ts or {}).get("combos_comprobados", [])
+
     partes = [
         f"Consulta: {res['fecha_consulta']}",
         "",
         sep, "MUNDICOLOR", sep,
-        _seccion_cuerpo(res.get("mundicolor")),
+        _seccion_cuerpo(res_mundi, combos_mundi),
         "",
         sep, "TURISMOSOCIAL", sep,
-        _seccion_cuerpo(res.get("turismosocial")),
+        _seccion_cuerpo(res_ts, combos_ts),
     ]
     return "\n".join(partes)
 
@@ -1374,7 +1469,7 @@ def comprobar(debug=False, solo=None):
                 if estado.get("aceptadas"):
                     context.add_cookies([{
                         "name": "OptanonAlertBoxClosed",
-                        "value": datetime.now().isoformat(),
+                        "value": ahora_es().isoformat(),
                         "domain": ".mundicolor.es",
                         "path": "/",
                     }])
@@ -1413,7 +1508,7 @@ def comprobar(debug=False, solo=None):
                 return {"anio": f["anio"], "meses": sorted(f["meses"])}
 
             resultado_mundi = {
-                "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
+                "fecha_consulta": ahora_es_str(),
                 "hoteles_objetivo": HOTELES_OBJETIVO,
                 "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                 "hacer_reserva": HACER_RESERVA,
@@ -1494,7 +1589,7 @@ def comprobar(debug=False, solo=None):
                       f"días verdes totales={n_dias_total}, abortado={abortado}")
 
                 resultado_ts = {
-                    "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
+                    "fecha_consulta": ahora_es_str(),
                     "hoteles_objetivo": HOTELES_OBJETIVO,
                     "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                     "hacer_reserva": HACER_RESERVA,
@@ -1510,7 +1605,7 @@ def comprobar(debug=False, solo=None):
                 }
 
             resultado = {
-                "fecha_consulta": datetime.now().isoformat(timespec="seconds"),
+                "fecha_consulta": ahora_es_str(),
                 "mundicolor": resultado_mundi,
                 "turismosocial": resultado_ts,
             }
