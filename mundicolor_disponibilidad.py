@@ -83,8 +83,8 @@ HOTELES_OBJETIVO = [
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
     # --- nuevos ---
-    "Bergantín",
-    "Mar Amantis",
+    "BERGANTIN",
+    "MAR AMANTIS",
     "Club Hotel Aguamarina",
     "BLUESEA Aloe Corralejo",
     "BLUESEA Club Caleta Dorada",
