@@ -1,7 +1,7 @@
 """
 Comprueba la disponibilidad en:
-  1) https://www.mundicolor.es/availability      (Imserso / Mundicolor)
-  2) https://www.turismosocial.es/availability   (Turismo Social)
+  1) https://www.mundicolor.es/availability      (Mundicolor - Islas)
+  2) https://www.turismosocial.es/availability   (Turismo Social - Península)
 
 - LOG en consola: muestra TODOS los días disponibles de cada combo.
 - EMAIL: se envía UNA SOLA VEZ al final, con el resumen de las dos webs.
@@ -418,6 +418,105 @@ def esperar_opciones(page, selector, timeout_ms=8000):
 
 
 # ---------------------------------------------------------------------
+# TurismoSocial: selectores flexibles (por si cambian los id)
+# ---------------------------------------------------------------------
+CAND_TRANSPORTE_TS = ["#transport-accreditation", "#transport",
+                      'select[name*="transport" i]', 'select[id*="transport" i]']
+CAND_ORIGEN_TS     = ["#origin-accreditation", "#origin",
+                      'select[name*="origin" i]', 'select[id*="origin" i]']
+CAND_ZONA_TS       = ["#destination-accreditation", "#destination",
+                      'select[name*="destination" i]', 'select[id*="destin" i]',
+                      'select[name*="zona" i]', 'select[id*="zona" i]']
+CAND_PROVINCIA_TS  = ["#province-accreditation", "#province",
+                      'select[name*="province" i]', 'select[id*="provinc" i]']
+CAND_LOCALIDAD_TS  = ["#town-accreditation", "#town",
+                      'select[name*="town" i]', 'select[id*="town" i]',
+                      'select[name*="localidad" i]', 'select[id*="localidad" i]']
+CAND_DIAS_TS       = ["#stay-accreditation", "#stay",
+                      'select[name*="stay" i]', 'select[id*="stay" i]',
+                      'select[name*="days" i]', 'select[id*="dias" i]']
+CAND_BUSCAR_TS     = ["#product-searcher-btn-accreditation", "#product-searcher-btn",
+                      'button:has-text("Buscar")', 'button:has-text("Consultar")',
+                      'button:has-text("Disponibilidad")',
+                      'button[type="submit"]']
+
+
+def _tag(page, loc):
+    try:
+        return loc.evaluate("e => e.tagName")
+    except Exception:
+        return ""
+
+
+def elegir_select_flexible(page, candidatos, etiqueta_regex, opcion,
+                           obligatorio=True, debug=False):
+    """Prueba varios selectores y, si falla, cae a get_by_label."""
+    # 1) por selector
+    for sel in candidatos:
+        try:
+            ctl = page.locator(sel).first
+            if ctl.count() > 0 and ctl.is_visible():
+                return elegir_select(page, sel, opcion, obligatorio, debug)
+        except Exception:
+            continue
+
+    # 2) por label accesible
+    try:
+        loc = page.get_by_label(etiqueta_regex).first
+        if loc.count() > 0 and _tag(page, loc) == "SELECT":
+            opciones = loc.evaluate("e => [...e.options].map(o => o.text.trim())")
+            rx = re.compile(rf"^\s*{re.escape(opcion)}\s*$", re.I)
+            for t in opciones:
+                if rx.match(t):
+                    loc.select_option(label=t)
+                    page.wait_for_timeout(1200)
+                    if debug:
+                        print(f"      ✓ (por label) {etiqueta_regex.pattern} = '{t}'")
+                    return True
+            if obligatorio:
+                raise RuntimeError(
+                    f"'{opcion}' no está en select por label "
+                    f"'{etiqueta_regex.pattern}': {opciones}")
+            return False
+    except Exception as e:
+        if debug:
+            print(f"      (label fallback falló: {e})")
+
+    if obligatorio:
+        raise RuntimeError(
+            f"No encuentro el <select> ni por {candidatos} "
+            f"ni por label /{etiqueta_regex.pattern}/")
+    return False
+
+
+def _listar_selects(page):
+    return page.evaluate("""() => [...document.querySelectorAll('select')].map(s => ({
+        id: s.id, name: s.name, options: [...s.options].map(o => o.text.trim()).slice(0,30)
+    }))""")
+
+
+def _pulsar_buscar_flexible(page, debug=False):
+    for sel in CAND_BUSCAR_TS:
+        try:
+            btn = page.locator(sel).first
+            if btn.count() > 0 and btn.is_visible():
+                btn.click(timeout=5000)
+                page.wait_for_load_state("networkidle")
+                page.wait_for_timeout(2500)
+                return True
+        except Exception:
+            continue
+    # último recurso: por role
+    page.get_by_role(
+        "button",
+        name=re.compile(r"buscar|consultar|disponibilidad", re.I)
+    ).first.click()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_timeout(2500)
+    return True
+
+
+# ---------------------------------------------------------------------
 # FORMULARIO
 # ---------------------------------------------------------------------
 def rellenar_campo(page, etiqueta_regex, valor, fallbacks, debug=False):
@@ -536,26 +635,52 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     _desmarcar_mascotas(page)
 
+    # Diagnóstico si --debug: imprime todos los selects disponibles
+    if debug:
+        try:
+            print("      [debug] <select> presentes:")
+            for s in _listar_selects(page):
+                print(f"        id={s['id']!r} name={s['name']!r} "
+                      f"opts={s['options'][:6]}…")
+        except Exception:
+            pass
+
     print(f"      Transporte = '{TRANSPORTE}'")
-    elegir_select(page, "#transport-accreditation", TRANSPORTE, obligatorio=True, debug=debug)
+    elegir_select_flexible(
+        page, CAND_TRANSPORTE_TS, re.compile(r"transporte", re.I),
+        TRANSPORTE, obligatorio=True, debug=debug)
 
-    # Zona de destino (Capitales de provincia / Costas)
+    # Origen (opcional)
+    try:
+        elegir_select_flexible(
+            page, CAND_ORIGEN_TS, re.compile(r"origen", re.I),
+            ORIGEN, obligatorio=False, debug=False)
+    except Exception:
+        pass
+
+    # Zona de destino
     print(f"      Zona de destino = '{zona}'")
-    elegir_select(page, "#destination-accreditation", zona, obligatorio=True, debug=debug)
-    esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
+    elegir_select_flexible(
+        page, CAND_ZONA_TS, re.compile(r"zona|destino", re.I),
+        zona, obligatorio=True, debug=debug)
 
-    # Provincia (si no existe para esa zona, abortamos este combo)
+    # Esperar a que se recarguen provincias
+    page.wait_for_timeout(1500)
+
+    # Provincia
     print(f"      Provincia = '{provincia}'")
     try:
-        elegir_select(page, "#province-accreditation", provincia, obligatorio=True, debug=debug)
+        elegir_select_flexible(
+            page, CAND_PROVINCIA_TS, re.compile(r"provincia", re.I),
+            provincia, obligatorio=True, debug=debug)
     except Exception as e:
         print(f"      ✗ Provincia '{provincia}' no disponible en zona '{zona}': {e}")
         return False
 
     # NO tocar Localidad ni No días (dejar por defecto)
-    # NO tocar origen (no requerido)
 
-    _pulsar_buscar(page)
+    # Botón Buscar
+    _pulsar_buscar_flexible(page, debug)
     return True
 
 
@@ -850,14 +975,16 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             if form_ok:
                 print("      (formulario ya cargado: solo cambio zona/provincia y BUSCAR)")
                 try:
-                    elegir_select(page, "#destination-accreditation", zona,
-                                  obligatorio=True, debug=debug)
-                    esperar_opciones(page, "#province-accreditation", timeout_ms=8000)
-                    elegir_select(page, "#province-accreditation", provincia,
-                                  obligatorio=True, debug=debug)
-                    _pulsar_buscar(page)
+                    elegir_select_flexible(
+                        page, CAND_ZONA_TS, re.compile(r"zona|destino", re.I),
+                        zona, obligatorio=True, debug=debug)
+                    page.wait_for_timeout(1200)
+                    elegir_select_flexible(
+                        page, CAND_PROVINCIA_TS, re.compile(r"provincia", re.I),
+                        provincia, obligatorio=True, debug=debug)
+                    _pulsar_buscar_flexible(page, debug)
                 except Exception as e:
-                    print(f"      (reintento de combo TS falló: {e}; hago flujo completo sin login)")
+                    print(f"      (reintento TS falló: {e}; hago flujo completo sin login)")
                     if not flujo_completo_turismosocial(page, zona, provincia, debug, con_login=False):
                         return []
             else:
