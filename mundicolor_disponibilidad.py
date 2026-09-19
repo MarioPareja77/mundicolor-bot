@@ -7,7 +7,7 @@ Comprueba la disponibilidad en https://www.mundicolor.es/availability
 - RESERVA: si HACER_RESERVA=True, al detectar un hotel (objetivo o cualquiera
            si PROBAR_RESERVA_SIN_FILTRO=True) pulsa SELECCIONAR, marca
            checkboxes y pulsa FINALIZAR RESERVA. Solo para días que cumplan
-           FILTRO_RESERVA_POR_DESTINO.
+           FILTRO_RESERVA_POR_DESTINO (o FILTRO_RESERVA_POR_PROVINCIA si aplica).
 
 Uso:
     python mundicolor_disponibilidad.py                     # una pasada
@@ -84,11 +84,19 @@ FILTRO_POR_DESTINO = {
 }
 
 # ------------- FILTRO TEMPORAL SOLO PARA RESERVAR --------------------
-# BALEARES: solo abril 2027
+# BALEARES: abril 2027 (por defecto)
+#   → IBIZA y MENORCA: marzo + abril 2027 (override por provincia)
+#   → MALLORCA: solo abril 2027
 # CANARIAS: marzo, abril, mayo, junio, octubre, noviembre 2027
 FILTRO_RESERVA_POR_DESTINO = {
     "BALEARES": {"anio": 2027, "meses": {4}},
     "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
+}
+
+# Overrides por (destino, provincia). Si existe, sustituye al filtro del destino.
+FILTRO_RESERVA_POR_PROVINCIA = {
+    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {3, 4}},
+    ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {3, 4}},
 }
 # ---------------------------------------------------------------------
 
@@ -161,11 +169,14 @@ def hotel_match_estricto(linea):
     return None
 
 
-def debe_reservar(destino, mes_str):
+def debe_reservar(destino, provincia, mes_str):
     """
-    Devuelve True si el día (destino + mes/año) cumple FILTRO_RESERVA_POR_DESTINO.
+    Devuelve True si el día (destino + provincia + mes/año) cumple el filtro.
+    Primero mira override por provincia; si no, usa el filtro del destino.
     """
-    f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
+    f = FILTRO_RESERVA_POR_PROVINCIA.get((destino.upper(), (provincia or "").upper()))
+    if f is None:
+        f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
     if f is None:
         return False  # sin regla definida → no reservar
     ma = mes_anio(mes_str)
@@ -527,8 +538,12 @@ def descripcion_filtro(destino):
     return f"{f['anio']} (meses {sorted(f['meses'])})"
 
 
-def descripcion_filtro_reserva(destino):
-    f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
+def descripcion_filtro_reserva(destino, provincia=None):
+    f = None
+    if provincia:
+        f = FILTRO_RESERVA_POR_PROVINCIA.get((destino.upper(), provincia.upper()))
+    if f is None:
+        f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
     if f is None:
         return "sin reserva"
     return f"{f['anio']} (meses {sorted(f['meses'])})"
@@ -703,11 +718,11 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 
             # ==== RESERVA ====
             if HACER_RESERVA:
-                # 1) ¿Este día (destino + mes) cumple el filtro de reserva?
-                if not debe_reservar(destino, d.get("mes", "")):
+                # 1) ¿Este día (destino + provincia + mes) cumple el filtro de reserva?
+                if not debe_reservar(destino, provincia, d.get("mes", "")):
                     if debug:
                         print(f"      · Reserva NO: día {d['dia']} de {d['mes']} no cumple filtro "
-                              f"({descripcion_filtro_reserva(destino)})")
+                              f"({descripcion_filtro_reserva(destino, provincia)})")
                     continue
 
                 # 2) ¿Qué línea reservar?
@@ -728,7 +743,7 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 
                 for linea in lineas_a_reservar:
                     print(f"      ↪ Reserva solicitada para día {d['dia']} de {d['mes']} "
-                          f"({destino}, filtro {descripcion_filtro_reserva(destino)})")
+                          f"({destino}/{provincia}, filtro {descripcion_filtro_reserva(destino, provincia)})")
                     ok = intentar_reserva(page, context, linea, debug)
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
 
@@ -818,6 +833,9 @@ def comprobar(debug=False, solo=None):
     print("→ Filtro RESERVA por destino:")
     for dest in ("BALEARES", "CANARIAS"):
         print(f"     {dest}: {descripcion_filtro_reserva(dest)}")
+        for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
+            if d == dest:
+                print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
     if PROBAR_EMAIL_SIN_FILTRO:
         print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
     if HACER_RESERVA:
@@ -858,7 +876,7 @@ def comprobar(debug=False, solo=None):
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
                 print(f"[{i}/{len(combos)}] {dest} / {prov}  · filtro email: {descripcion_filtro(dest)}"
-                      f"  · filtro reserva: {descripcion_filtro_reserva(dest)}")
+                      f"  · filtro reserva: {descripcion_filtro_reserva(dest, prov)}")
                 dias = comprobar_combo(page, context, dest, prov, debug, primera=(i == 1))
 
                 if not dias:
@@ -891,10 +909,17 @@ def comprobar(debug=False, solo=None):
                 "filtro_reserva_por_destino": {
                     k: _filtro_serializable(v) for k, v in FILTRO_RESERVA_POR_DESTINO.items()
                 },
+                "filtro_reserva_por_provincia": {
+                    f"{k[0]}/{k[1]}": _filtro_serializable(v)
+                    for k, v in FILTRO_RESERVA_POR_PROVINCIA.items()
+                },
                 "combos_comprobados": [
                     {"destino": d, "provincia": p,
                      "filtro_email": _filtro_serializable(FILTRO_POR_DESTINO.get(d.upper())),
-                     "filtro_reserva": _filtro_serializable(FILTRO_RESERVA_POR_DESTINO.get(d.upper()))}
+                     "filtro_reserva": _filtro_serializable(
+                         FILTRO_RESERVA_POR_PROVINCIA.get((d.upper(), p.upper()))
+                         or FILTRO_RESERVA_POR_DESTINO.get(d.upper())
+                     )}
                     for d, p in combos
                 ],
                 "disponibles": todos,
