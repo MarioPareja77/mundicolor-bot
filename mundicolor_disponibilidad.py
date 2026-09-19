@@ -71,6 +71,7 @@ MAX_FALLOS_CONSECUTIVOS_TS = 3
 
 # ----------------- HOTELES OBJETIVO (whitelist) ----------------------
 HOTELES_OBJETIVO = [
+    # --- originales ---
     "Alua Boccaccio",
     "Alua Gran Camp de Mar",
     "Samos",
@@ -81,6 +82,13 @@ HOTELES_OBJETIVO = [
     "Globales Almirante Farragut",
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
+    # --- nuevos ---
+    "Bergantín",
+    "Mar Amantis",
+    "Club Hotel Aguamarina",
+    "BLUESEA Aloe Corralejo",
+    "BLUESEA Club Caleta Dorada",
+    "Royal Suite Hotel",
 ]
 
 PROBAR_EMAIL_SIN_FILTRO = True
