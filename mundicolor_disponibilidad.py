@@ -1,13 +1,7 @@
 """
 Comprueba la disponibilidad en:
-  1) https://www.mundicolor.es/availability      (Mundicolor - Islas)
-  2) https://www.turismosocial.es/availability   (Turismo Social - Península)
-
-- LOG en consola: muestra TODOS los días disponibles de cada combo.
-- EMAIL: se envía UNA SOLA VEZ al final, con el resumen de las dos webs.
-- RESERVA: si HACER_RESERVA=True, al detectar un hotel (objetivo o cualquiera
-           si PROBAR_RESERVA_SIN_FILTRO=True) pulsa SELECCIONAR, marca
-           checkboxes y pulsa FINALIZAR RESERVA.
+  1) https://www.mundicolor.es/availability      (Imserso / Mundicolor)
+  2) https://www.turismosocial.es/availability   (Turismo Social)
 
 Uso:
     python mundicolor_disponibilidad.py                     # una pasada
@@ -71,7 +65,6 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Murcia",
     "Santa Cruz de Tenerife",
 ]
-# Solo nos interesan hoteles disponibles de marzo a junio (cualquier año)
 MESES_TURISMOSOCIAL = {3, 4, 5, 6}
 # ---------------------------------------------------------------------
 
@@ -89,15 +82,11 @@ HOTELES_OBJETIVO = [
     "Parque Vacacional Eden",
 ]
 
-# === MODO PRUEBA EMAIL ===
 PROBAR_EMAIL_SIN_FILTRO = True
-
-# === RESERVA ===
 HACER_RESERVA = True
 PROBAR_RESERVA_SIN_FILTRO = True
 # ---------------------------------------------------------------------
 
-# ------------- FILTRO TEMPORAL MUNDICOLOR (email) --------------------
 FILTRO_POR_DESTINO = {
     "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6, 7, 8, 9, 10}},
     "CANARIAS": None,
@@ -121,14 +110,12 @@ MESES_ES = {
     "noviembre": 11, "diciembre": 12,
 }
 
-# ----------------------------- EMAIL ---------------------------------
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SMTP_USER     = os.environ.get("SMTP_USER", "marioparejanieto@gmail.com")
 SMTP_PASS     = os.environ.get("SMTP_PASS", "wnfx ldkt oomn yqoi")
 EMAIL_DESTINO = os.environ.get("EMAIL_DESTINO", "marioparejanieto@gmail.com")
 EMAIL_SOLO_SI_HAY = True
-# ---------------------------------------------------------------------
 
 CAPTCHA_TIMEOUT_S = 300
 
@@ -143,6 +130,45 @@ def shot(page, name, debug):
             page.screenshot(path=str(OUT_DIR / f"{name}.png"), full_page=True)
         except Exception:
             pass
+
+
+# ---------------------------------------------------------------------
+# DEBUG DUMP
+# ---------------------------------------------------------------------
+def _dump_debug(page, name):
+    """Guarda HTML + screenshot + lista de todos los <select> de todos los frames."""
+    try:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = OUT_DIR / f"debug_{name}_{ts}"
+        try:
+            base.with_suffix(".html").write_text(page.content(), encoding="utf-8")
+            print(f"      [debug] HTML guardado en {base}.html")
+        except Exception as e:
+            print(f"      [debug] no pude guardar HTML: {e}")
+        try:
+            page.screenshot(path=str(base) + ".png", full_page=True)
+            print(f"      [debug] PNG guardado en {base}.png")
+        except Exception:
+            pass
+
+        for fi, frame in enumerate(page.frames):
+            try:
+                info = frame.evaluate("""() => [...document.querySelectorAll('select')].map(s => ({
+                    id: s.id, name: s.name,
+                    options: [...s.options].map(o => o.text.trim()).slice(0,40),
+                    visible: !!(s.offsetWidth || s.offsetHeight)
+                }))""")
+                if info:
+                    print(f"      [debug] frame {fi} ({frame.url}):")
+                    for s in info:
+                        print(f"        select id={s['id']!r} name={s['name']!r} "
+                              f"visible={s['visible']} opts={s['options']}")
+                else:
+                    print(f"      [debug] frame {fi} ({frame.url}): sin <select>")
+            except Exception as e:
+                print(f"      [debug] no pude volcar frame {fi}: {e}")
+    except Exception as e:
+        print(f"      [debug] dump falló: {e}")
 
 
 # ---------------------------------------------------------------------
@@ -184,7 +210,6 @@ def hotel_match_estricto(linea):
 
 
 def debe_reservar(destino, provincia, mes_str):
-    """Mundicolor: ¿este día cumple el filtro de reserva?"""
     f = FILTRO_RESERVA_POR_PROVINCIA.get((destino.upper(), (provincia or "").upper()))
     if f is None:
         f = FILTRO_RESERVA_POR_DESTINO.get(destino.upper())
@@ -198,7 +223,6 @@ def debe_reservar(destino, provincia, mes_str):
 
 
 def debe_reservar_turismosocial(mes_str):
-    """TurismoSocial: solo marzo–junio, cualquier año."""
     ma = mes_anio(mes_str)
     if not ma:
         return False
@@ -347,7 +371,7 @@ def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
 
 
 # ---------------------------------------------------------------------
-# SELECTS
+# SELECTS (helpers básicos)
 # ---------------------------------------------------------------------
 def opciones_de(page, selector):
     return page.locator(selector).first.evaluate("e => [...e.options].map(o => o.text.trim())")
@@ -397,11 +421,6 @@ def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
         raise RuntimeError(msg)
     if debug:
         print(f"      (aviso) {msg}")
-        for t in textos:
-            if t and t.lower() not in ("selecciona", "seleccione", "elige", "--", ""):
-                ctl.select_option(label=t)
-                page.wait_for_timeout(1200)
-                break
     return False
 
 
@@ -418,81 +437,79 @@ def esperar_opciones(page, selector, timeout_ms=8000):
 
 
 # ---------------------------------------------------------------------
-# TurismoSocial: selectores flexibles (por si cambian los id)
+# SELECTS robustos: buscar por contenido de las opciones (para TS)
 # ---------------------------------------------------------------------
-CAND_TRANSPORTE_TS = ["#transport-accreditation", "#transport",
-                      'select[name*="transport" i]', 'select[id*="transport" i]']
-CAND_ORIGEN_TS     = ["#origin-accreditation", "#origin",
-                      'select[name*="origin" i]', 'select[id*="origin" i]']
-CAND_ZONA_TS       = ["#destination-accreditation", "#destination",
-                      'select[name*="destination" i]', 'select[id*="destin" i]',
-                      'select[name*="zona" i]', 'select[id*="zona" i]']
-CAND_PROVINCIA_TS  = ["#province-accreditation", "#province",
-                      'select[name*="province" i]', 'select[id*="provinc" i]']
-CAND_LOCALIDAD_TS  = ["#town-accreditation", "#town",
-                      'select[name*="town" i]', 'select[id*="town" i]',
-                      'select[name*="localidad" i]', 'select[id*="localidad" i]']
-CAND_DIAS_TS       = ["#stay-accreditation", "#stay",
-                      'select[name*="stay" i]', 'select[id*="stay" i]',
-                      'select[name*="days" i]', 'select[id*="dias" i]']
-CAND_BUSCAR_TS     = ["#product-searcher-btn-accreditation", "#product-searcher-btn",
-                      'button:has-text("Buscar")', 'button:has-text("Consultar")',
-                      'button:has-text("Disponibilidad")',
-                      'button[type="submit"]']
-
-
-def _tag(page, loc):
-    try:
-        return loc.evaluate("e => e.tagName")
-    except Exception:
-        return ""
-
-
-def elegir_select_flexible(page, candidatos, etiqueta_regex, opcion,
-                           obligatorio=True, debug=False):
-    """Prueba varios selectores y, si falla, cae a get_by_label."""
-    # 1) por selector
-    for sel in candidatos:
+def _iter_selects(page):
+    """Genera (frame, locator_select, index) para todos los <select> visibles."""
+    for frame in page.frames:
         try:
-            ctl = page.locator(sel).first
-            if ctl.count() > 0 and ctl.is_visible():
-                return elegir_select(page, sel, opcion, obligatorio, debug)
+            n = frame.locator("select").count()
         except Exception:
             continue
+        for i in range(n):
+            yield frame, frame.locator("select").nth(i), i
 
-    # 2) por label accesible
+
+def encontrar_select_por_opcion(page, opcion,
+                                regex_fallback=None, timeout_ms=10000):
+    """
+    Busca un <select> en cualquier frame cuya lista de <option> contenga
+    una coincidencia exacta (case-insensitive) con `opcion`, o una
+    coincidencia por regex si se pasa `regex_fallback`.
+    Devuelve (locator, texto_exacto_opcion) o (None, None).
+    """
+    rx_exact = re.compile(rf"^\s*{re.escape(opcion)}\s*$", re.I)
+    t0 = time.time()
+    while (time.time() - t0) * 1000 < timeout_ms:
+        for _frame, sel, _i in _iter_selects(page):
+            try:
+                if not sel.is_visible():
+                    continue
+                opts = sel.evaluate("e => [...e.options].map(o => o.text.trim())")
+            except Exception:
+                continue
+            for t in opts:
+                if rx_exact.match(t):
+                    return sel, t
+            if regex_fallback:
+                for t in opts:
+                    if re.search(regex_fallback, t, re.I):
+                        return sel, t
+        page.wait_for_timeout(400)
+    return None, None
+
+
+def elegir_por_contenido(page, opcion, etiqueta,
+                         obligatorio=True, debug=False, regex_fallback=None):
+    sel, texto = encontrar_select_por_opcion(
+        page, opcion, regex_fallback=regex_fallback, timeout_ms=10000)
+    if sel is None:
+        if obligatorio:
+            print(f"      ✗ No encuentro ningún <select> con opción '{opcion}' ({etiqueta})")
+            _dump_debug(page, f"no_select_{etiqueta}")
+            raise RuntimeError(
+                f"No encuentro ningún <select> con la opción '{opcion}' ({etiqueta})")
+        return False
     try:
-        loc = page.get_by_label(etiqueta_regex).first
-        if loc.count() > 0 and _tag(page, loc) == "SELECT":
-            opciones = loc.evaluate("e => [...e.options].map(o => o.text.trim())")
-            rx = re.compile(rf"^\s*{re.escape(opcion)}\s*$", re.I)
-            for t in opciones:
-                if rx.match(t):
-                    loc.select_option(label=t)
-                    page.wait_for_timeout(1200)
-                    if debug:
-                        print(f"      ✓ (por label) {etiqueta_regex.pattern} = '{t}'")
-                    return True
-            if obligatorio:
-                raise RuntimeError(
-                    f"'{opcion}' no está en select por label "
-                    f"'{etiqueta_regex.pattern}': {opciones}")
-            return False
-    except Exception as e:
+        sel.select_option(label=texto)
+        page.wait_for_timeout(1200)
         if debug:
-            print(f"      (label fallback falló: {e})")
+            print(f"      ✓ {etiqueta} = '{texto}'")
+        return True
+    except Exception as e:
+        if obligatorio:
+            _dump_debug(page, f"select_fail_{etiqueta}")
+            raise RuntimeError(f"Fallo al seleccionar '{texto}' en {etiqueta}: {e}")
+        return False
 
-    if obligatorio:
-        raise RuntimeError(
-            f"No encuentro el <select> ni por {candidatos} "
-            f"ni por label /{etiqueta_regex.pattern}/")
-    return False
 
-
-def _listar_selects(page):
-    return page.evaluate("""() => [...document.querySelectorAll('select')].map(s => ({
-        id: s.id, name: s.name, options: [...s.options].map(o => o.text.trim()).slice(0,30)
-    }))""")
+# ---------------------------------------------------------------------
+# BOTÓN BUSCAR flexible (para TS)
+# ---------------------------------------------------------------------
+CAND_BUSCAR_TS = ["#product-searcher-btn-accreditation", "#product-searcher-btn",
+                  'button:has-text("Buscar")', 'button:has-text("Consultar")',
+                  'button:has-text("Disponibilidad")',
+                  'button[type="submit"]']
 
 
 def _pulsar_buscar_flexible(page, debug=False):
@@ -506,18 +523,22 @@ def _pulsar_buscar_flexible(page, debug=False):
                 return True
         except Exception:
             continue
-    # último recurso: por role
-    page.get_by_role(
-        "button",
-        name=re.compile(r"buscar|consultar|disponibilidad", re.I)
-    ).first.click()
-    page.wait_for_load_state("networkidle")
-    page.wait_for_timeout(2500)
-    return True
+    try:
+        page.get_by_role(
+            "button",
+            name=re.compile(r"buscar|consultar|disponibilidad", re.I)
+        ).first.click()
+        page.wait_for_load_state("networkidle")
+        page.wait_for_timeout(2500)
+        return True
+    except Exception as e:
+        print(f"      ✗ No encuentro botón BUSCAR: {e}")
+        _dump_debug(page, "no_boton_buscar")
+        return False
 
 
 # ---------------------------------------------------------------------
-# FORMULARIO
+# FORMULARIO (helpers)
 # ---------------------------------------------------------------------
 def rellenar_campo(page, etiqueta_regex, valor, fallbacks, debug=False):
     for sel in fallbacks:
@@ -542,9 +563,10 @@ FALLBACK_CLAVE = ["input#addPaxPasswordIpt", 'input[type="password"]', 'input[na
 
 def _login_pasajeros(page, debug=False):
     try:
-        page.locator("#addPaxIpt").first.wait_for(state="visible", timeout=10000)
+        page.locator("#addPaxIpt").first.wait_for(state="visible", timeout=15000)
     except Exception:
-        pass
+        if debug:
+            print("      (no veo #addPaxIpt, intento igualmente rellenar por fallbacks)")
 
     for i, p in enumerate(PASAJEROS, 1):
         print(f"      Login pasajero {i} ({p['dni']})…")
@@ -621,10 +643,17 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
 
 
 # ------------- TURISMOSOCIAL: flujo y combos -------------------------
+def _regex_flexible_tildes(s):
+    """Convierte 'Cadiz' → 'C[aá]d[ií]z', 'Malaga' → 'M[aá]l[aá]g[aá]', etc."""
+    subs = {"a": "[aá]", "e": "[eé]", "i": "[ií]", "o": "[oó]", "u": "[uú]",
+            "A": "[aáAÁ]", "E": "[eéEÉ]", "I": "[iíIÍ]", "O": "[oóOÓ]", "U": "[uúUÚ]"}
+    return "".join(subs.get(c, re.escape(c)) for c in s)
+
+
 def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
     print("   → Abriendo TurismoSocial…")
     page.goto(URL_TURISMOSOCIAL, wait_until="networkidle")
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(2000)
 
     cookies(page, debug=debug)
     esperar_captcha(page, debug=debug)
@@ -635,52 +664,89 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
     _desmarcar_mascotas(page)
 
-    # Diagnóstico si --debug: imprime todos los selects disponibles
-    if debug:
+    # Esperar activamente a que exista al menos un <select> visible
+    print("      Esperando a que cargue el formulario…")
+    t0 = time.time()
+    while (time.time() - t0) < 15:
         try:
-            print("      [debug] <select> presentes:")
-            for s in _listar_selects(page):
-                print(f"        id={s['id']!r} name={s['name']!r} "
-                      f"opts={s['options'][:6]}…")
+            n_vis = page.locator("select:visible").count()
         except Exception:
-            pass
+            n_vis = 0
+        if n_vis > 0:
+            break
+        page.wait_for_timeout(500)
 
+    if debug:
+        print("      [debug] <select> presentes ahora:")
+        for _fr, sel, _i in _iter_selects(page):
+            try:
+                opts = sel.evaluate("e => [...e.options].map(o => o.text.trim()).slice(0,10)")
+                tag_id = sel.evaluate("e => (e.id||'')+'|'+(e.name||'')")
+                print(f"        id|name={tag_id!r} opts[:10]={opts}")
+            except Exception:
+                pass
+
+    # --- Transporte: por contenido (no por id) ---
     print(f"      Transporte = '{TRANSPORTE}'")
-    elegir_select_flexible(
-        page, CAND_TRANSPORTE_TS, re.compile(r"transporte", re.I),
-        TRANSPORTE, obligatorio=True, debug=debug)
-
-    # Origen (opcional)
     try:
-        elegir_select_flexible(
-            page, CAND_ORIGEN_TS, re.compile(r"origen", re.I),
-            ORIGEN, obligatorio=False, debug=False)
+        ok = elegir_por_contenido(
+            page, TRANSPORTE, "Transporte",
+            obligatorio=True, debug=debug,
+            regex_fallback=r"sin\s+transporte")
+        if not ok:
+            raise RuntimeError("Transporte no encontrado")
+    except Exception as e:
+        print(f"      ✗ Transporte: {e}")
+        return False
+
+    # --- Origen (opcional) ---
+    try:
+        elegir_por_contenido(
+            page, ORIGEN, "Origen",
+            obligatorio=False, debug=False,
+            regex_fallback=r"selecciona")
     except Exception:
         pass
 
-    # Zona de destino
+    # --- Zona de destino ---
     print(f"      Zona de destino = '{zona}'")
-    elegir_select_flexible(
-        page, CAND_ZONA_TS, re.compile(r"zona|destino", re.I),
-        zona, obligatorio=True, debug=debug)
+    try:
+        regex_zona = None
+        if "Capitales" in zona:
+            regex_zona = r"capital(es)?\s+de\s+provincia"
+        elif "Costa" in zona:
+            regex_zona = r"costa"
+        ok = elegir_por_contenido(
+            page, zona, "ZonaDestino",
+            obligatorio=True, debug=debug,
+            regex_fallback=regex_zona)
+        if not ok:
+            raise RuntimeError("Zona no encontrada")
+    except Exception as e:
+        print(f"      ✗ Zona '{zona}': {e}")
+        return False
 
-    # Esperar a que se recarguen provincias
     page.wait_for_timeout(1500)
 
-    # Provincia
+    # --- Provincia ---
     print(f"      Provincia = '{provincia}'")
     try:
-        elegir_select_flexible(
-            page, CAND_PROVINCIA_TS, re.compile(r"provincia", re.I),
-            provincia, obligatorio=True, debug=debug)
+        base = provincia[3:] if provincia.startswith("I. ") else provincia
+        regex_prov = _regex_flexible_tildes(base)
+        ok = elegir_por_contenido(
+            page, provincia, "Provincia",
+            obligatorio=True, debug=debug,
+            regex_fallback=regex_prov)
+        if not ok:
+            raise RuntimeError("Provincia no encontrada")
     except Exception as e:
-        print(f"      ✗ Provincia '{provincia}' no disponible en zona '{zona}': {e}")
+        print(f"      ✗ Provincia '{provincia}' en zona '{zona}': {e}")
         return False
 
     # NO tocar Localidad ni No días (dejar por defecto)
 
-    # Botón Buscar
-    _pulsar_buscar_flexible(page, debug)
+    if not _pulsar_buscar_flexible(page, debug):
+        return False
     return True
 
 
@@ -911,7 +977,6 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
 
-            # ==== RESERVA ====
             if HACER_RESERVA:
                 if not debe_reservar(destino, provincia, d.get("mes", "")):
                     if debug:
@@ -968,20 +1033,26 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 return []
         else:
             try:
-                form_ok = page.locator("#destination-accreditation").first.is_visible(timeout=2000)
+                hay_form = page.locator("select:visible").count() > 0
             except Exception:
-                form_ok = False
+                hay_form = False
 
-            if form_ok:
+            if hay_form:
                 print("      (formulario ya cargado: solo cambio zona/provincia y BUSCAR)")
                 try:
-                    elegir_select_flexible(
-                        page, CAND_ZONA_TS, re.compile(r"zona|destino", re.I),
-                        zona, obligatorio=True, debug=debug)
-                    page.wait_for_timeout(1200)
-                    elegir_select_flexible(
-                        page, CAND_PROVINCIA_TS, re.compile(r"provincia", re.I),
-                        provincia, obligatorio=True, debug=debug)
+                    regex_zona = (r"capital(es)?\s+de\s+provincia" if "Capitales" in zona
+                                  else r"costa")
+                    elegir_por_contenido(
+                        page, zona, "ZonaDestino",
+                        obligatorio=True, debug=debug,
+                        regex_fallback=regex_zona)
+                    page.wait_for_timeout(1500)
+                    base = provincia[3:] if provincia.startswith("I. ") else provincia
+                    regex_prov = _regex_flexible_tildes(base)
+                    elegir_por_contenido(
+                        page, provincia, "Provincia",
+                        obligatorio=True, debug=debug,
+                        regex_fallback=regex_prov)
                     _pulsar_buscar_flexible(page, debug)
                 except Exception as e:
                     print(f"      (reintento TS falló: {e}; hago flujo completo sin login)")
@@ -994,7 +1065,6 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
 
         dias = page.evaluate(JS_DIAS_VERDES)
 
-        # Filtro temporal turismosocial: solo meses marzo–junio
         dias_temporal_ok = []
         for d in dias:
             if debe_reservar_turismosocial(d.get("mes", "")):
@@ -1015,7 +1085,6 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             d["es_objetivo"] = bool(hoteles_encontrados)
             dias_todos.append(d)
 
-            # ==== RESERVA ====
             if HACER_RESERVA and debe_reservar_turismosocial(d.get("mes", "")):
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
@@ -1039,7 +1108,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
 
                     try:
-                        if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
+                        if page.locator("select:visible").count() == 0:
                             print("      (la página ha cambiado tras la reserva; siguiente combo hará flujo completo)")
                             return dias_todos
                     except Exception:
@@ -1079,17 +1148,13 @@ def enviar_email(asunto, cuerpo, debug=False):
 
 
 def _seccion_cuerpo(res_seccion, titulo):
+    """
+    Devuelve el bloque de una web (Mundicolor o TurismoSocial) SIN repetir
+    el título (ya lo pone construir_cuerpo_combinado) y SIN contadores ni
+    el aviso de MODO PRUEBA. Solo lista las zonas y los hoteles encontrados.
+    """
     lineas = []
-    lineas.append(f"=== {titulo} ===")
-    if not res_seccion:
-        lineas.append("(sin datos)")
-        return "\n".join(lineas)
-
-    objetivos = res_seccion.get("disponibles_objetivo", [])
-    lineas.append(f"Total días con hoteles objetivo: {len(objetivos)}")
-    if PROBAR_EMAIL_SIN_FILTRO:
-        lineas.append("(MODO PRUEBA: se han aceptado TODOS los hoteles, no solo los objetivo)")
-    lineas.append("")
+    objetivos = (res_seccion or {}).get("disponibles_objetivo", [])
 
     zonas = {}
     for d in objetivos:
@@ -1101,31 +1166,33 @@ def _seccion_cuerpo(res_seccion, titulo):
         return "\n".join(lineas)
 
     for zona, dias in zonas.items():
-        lineas.append(f"  --- {zona} --- ({len(dias)} día/s)")
+        lineas.append(f"--- {zona} ---")
         for d in dias:
             hoteles = ", ".join(d.get("hoteles_objetivo", []))
-            lineas.append(f"    • Día {d['dia']} de {d['mes']}   [{hoteles}]")
+            lineas.append(f"  • Día {d['dia']} de {d['mes']}   [{hoteles}]")
             for l in d["detalle"]:
                 if hotel_match(l):
-                    lineas.append(f"        {l}")
+                    lineas.append(f"      {l}")
         lineas.append("")
     return "\n".join(lineas)
 
 
 def construir_cuerpo_combinado(res):
-    lineas = []
-    lineas.append(f"Consulta: {res['fecha_consulta']}")
-    lineas.append("")
-    lineas.append("=" * 60)
-    lineas.append("MUNDICOLOR")
-    lineas.append("=" * 60)
-    lineas.append(_seccion_cuerpo(res.get("mundicolor"), "MUNDICOLOR"))
-    lineas.append("")
-    lineas.append("=" * 60)
-    lineas.append("TURISMOSOCIAL")
-    lineas.append("=" * 60)
-    lineas.append(_seccion_cuerpo(res.get("turismosocial"), "TURISMOSOCIAL"))
-    return "\n".join(lineas)
+    sep = "=" * 60
+    partes = [
+        f"Consulta: {res['fecha_consulta']}",
+        "",
+        sep,
+        "MUNDICOLOR",
+        sep,
+        _seccion_cuerpo(res.get("mundicolor"), "MUNDICOLOR"),
+        "",
+        sep,
+        "TURISMOSOCIAL",
+        sep,
+        _seccion_cuerpo(res.get("turismosocial"), "TURISMOSOCIAL"),
+    ]
+    return "\n".join(partes)
 
 
 # ---------------------------------------------------------------------
@@ -1183,7 +1250,6 @@ def comprobar(debug=False, solo=None):
 
         page = context.new_page()
         try:
-            # ============ MUNDICOLOR ============
             print(f"\n{'=' * 25} MUNDICOLOR {'=' * 25}")
             print(f"→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
             todos = []
@@ -1240,7 +1306,6 @@ def comprobar(debug=False, solo=None):
                 "disponibles_objetivo": todos_objetivo,
             }
 
-            # ============ TURISMOSOCIAL ============
             if solo:
                 print("\n(flag --solo activo: se omite TurismoSocial)")
                 resultado_ts = None
@@ -1327,23 +1392,16 @@ def mostrar(res, debug=False):
     print(f"  Mundicolor    : {n_obj_mundi} día(s) con hotel objetivo")
     print(f"  TurismoSocial : {n_obj_ts} día(s) con hotel objetivo")
 
-    # Email único al final
+    ASUNTO = "[IMSERSO 2027] Disponibilidad hoteles islas y península"
+
     if n_obj_total == 0 and not PROBAR_EMAIL_SIN_FILTRO:
         print("→ Sin hoteles objetivo en ninguna web: no se envía email.")
         if not EMAIL_SOLO_SI_HAY:
-            enviar_email(
-                "Imserso: sin disponibilidad en hoteles objetivo",
-                construir_cuerpo_combinado(res),
-                debug=debug,
-            )
+            enviar_email(ASUNTO, construir_cuerpo_combinado(res), debug=debug)
         return
 
-    print(f"\n→ Enviando email resumen (Mundicolor + TurismoSocial)…")
-    if PROBAR_EMAIL_SIN_FILTRO:
-        asunto = f"🧪 [PRUEBA] Imserso: resumen disponibilidad (M:{n_obj_mundi} / TS:{n_obj_ts})"
-    else:
-        asunto = f"🟢 Imserso: {n_obj_total} día(s) con hoteles objetivo (M:{n_obj_mundi} / TS:{n_obj_ts})"
-    enviar_email(asunto, construir_cuerpo_combinado(res), debug=debug)
+    print("\n→ Enviando email resumen (Mundicolor + TurismoSocial)…")
+    enviar_email(ASUNTO, construir_cuerpo_combinado(res), debug=debug)
 
 
 if __name__ == "__main__":
