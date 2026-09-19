@@ -77,8 +77,8 @@ PROVINCIAS_TURISMOSOCIAL = [
     "Murcia",
     "Santa Cruz de Tenerife",
 ]
-MESES_TURISMOSOCIAL = {3, 4, 5, 6}          # disponibles: marzo–junio
-MESES_TURISMOSOCIAL_ESPERA = {5, 6, 7, 8, 9, 10}  # lista de espera: desde mayo
+MESES_TURISMOSOCIAL = {3, 4, 5, 6}
+MESES_TURISMOSOCIAL_ESPERA = {5, 6, 7, 8, 9, 10}
 MAX_FALLOS_CONSECUTIVOS_TS = 3
 # ---------------------------------------------------------------------
 
@@ -107,6 +107,11 @@ HOTELES_OBJETIVO = [
 PROBAR_EMAIL_SIN_FILTRO = True
 HACER_RESERVA = True
 PROBAR_RESERVA_SIN_FILTRO = True
+# ---------------------------------------------------------------------
+
+# ------------- FILTRO 4 ESTRELLAS PARA RESERVAR ----------------------
+# Solo se reservará si la línea del hotel contiene indicios de 4★
+SOLO_RESERVAR_4_ESTRELLAS = True
 # ---------------------------------------------------------------------
 
 FILTRO_POR_DESTINO = {
@@ -336,6 +341,30 @@ def hotel_match_estricto(linea):
     return None
 
 
+# ---------------------------------------------------------------------
+# 4 ESTRELLAS
+# ---------------------------------------------------------------------
+PATRONES_4_ESTRELLAS = [
+    r"\b4\s*\*",              # "4*", "4 *"
+    r"\b4\s*★",               # "4★"
+    r"\(\s*4\s*\*\s*\)",      # "(4*)"
+    r"\b4\s*estrellas?\b",    # "4 estrellas", "4 estrella"
+    r"\bcategor[ií]a\s*4\b",  # "categoría 4"
+    r"(?<!\*)\*{4}(?!\*)",    # "****" exactamente 4 asteriscos
+]
+
+
+def es_hotel_4_estrellas(linea):
+    """True si la línea del hotel contiene indicios de 4 estrellas."""
+    if not linea:
+        return False
+    s = linea.lower()
+    for p in PATRONES_4_ESTRELLAS:
+        if re.search(p, s):
+            return True
+    return False
+
+
 def debe_reservar(destino, provincia, mes_str):
     f = FILTRO_RESERVA_POR_PROVINCIA.get((destino.upper(), (provincia or "").upper()))
     if f is None:
@@ -350,10 +379,6 @@ def debe_reservar(destino, provincia, mes_str):
 
 
 def debe_reservar_turismosocial(mes_str, en_lista_espera=False):
-    """
-    - Disponible: meses MESES_TURISMOSOCIAL (marzo–junio)
-    - Lista de espera: a partir de mayo (MESES_TURISMOSOCIAL_ESPERA)
-    """
     ma = mes_anio(mes_str)
     if not ma:
         return False
@@ -930,7 +955,6 @@ JS_DIAS_VERDES = """
 }
 """
 
-# --- Días marcados como LISTA DE ESPERA (naranja/amarillo o etiqueta textual) ---
 JS_DIAS_LISTA_ESPERA = """
 () => {
   const meses = /(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\\s+(de\\s+)?\\d{4}/i;
@@ -942,7 +966,6 @@ JS_DIAS_LISTA_ESPERA = """
     if (!/^\\d{1,2}$/.test(txt)) continue;
     const meta = ((el.className || '') + ' ' + (el.getAttribute('aria-label') || '') + ' ' + (el.title || '')).toLowerCase();
     const bg = (getComputedStyle(el).backgroundColor.match(/\\d+/g) || []).map(Number);
-    // Naranja/amarillo: R y G altos, B bajo
     const naranja = bg.length >= 3 && bg[0] > 180 && bg[1] > 120 && bg[2] < 140 && bg[0] > bg[2] + 60;
     const marcado = /lista[-_ ]?espera|listaespera|waiting[-_ ]?list|en[-_ ]?espera/.test(meta)
                     && !/no[-_ ]?espera|sin[-_ ]?espera/.test(meta);
@@ -957,7 +980,6 @@ JS_DIAS_LISTA_ESPERA = """
 }
 """
 
-# --- Extrae SOLO hoteles con botón SELECCIONAR visible ---
 JS_HOTELES_DISPONIBLES = r"""
 () => {
   const out = [];
@@ -1044,10 +1066,6 @@ def descripcion_filtro_reserva(destino, provincia=None):
 
 
 def detalle_dia(page, idx, debug=False, attr="libre"):
-    """
-    Devuelve SOLO los hoteles con botón SELECCIONAR visible para el día
-    referenciado por el atributo `data-<attr>="idx"` (`libre` o `espera`).
-    """
     _cerrar_modales(page, debug=debug)
     loc = page.locator(f'[data-{attr}="{idx}"]').first
     try:
@@ -1081,6 +1099,89 @@ def detalle_dia(page, idx, debug=False, attr="libre"):
 # ---------------------------------------------------------------------
 # RESERVA
 # ---------------------------------------------------------------------
+def _marcar_todos_los_checkboxes(page, debug=False, timeout_s=8):
+    """
+    Espera a que aparezcan checkboxes visibles y marca TODOS los que encuentre
+    (con force=True como fallback). Devuelve (marcadas, total_visibles).
+    """
+    t0 = time.time()
+    while (time.time() - t0) < timeout_s:
+        try:
+            n = page.locator("input[type='checkbox']").count()
+        except Exception:
+            n = 0
+        if n > 0:
+            break
+        page.wait_for_timeout(300)
+
+    checkboxes = page.locator("input[type='checkbox']")
+    n = checkboxes.count()
+    print(f"      Checkboxes encontradas: {n}")
+    marcadas = 0
+    visibles = 0
+    for i in range(n):
+        cb = checkboxes.nth(i)
+        try:
+            if not cb.is_visible():
+                continue
+            visibles += 1
+            if cb.is_checked():
+                marcadas += 1
+                print(f"      ✓ Checkbox {i+1} ya estaba marcada")
+                continue
+            try:
+                cb.check(timeout=2500)
+            except Exception:
+                # Reintento con force y click
+                try:
+                    cb.check(timeout=2500, force=True)
+                except Exception:
+                    cb.click(timeout=2500, force=True)
+            if cb.is_checked():
+                marcadas += 1
+                print(f"      ✓ Checkbox {i+1} marcada")
+            else:
+                print(f"      (checkbox {i+1} no se pudo marcar)")
+        except Exception as e:
+            print(f"      (checkbox {i+1} error: {e})")
+    print(f"      → Checkboxes visibles={visibles}, marcadas={marcadas}")
+    return marcadas, visibles
+
+
+def _pulsar_finalizar_reserva(page, debug=False):
+    print("      → Buscando FINALIZAR RESERVA...")
+    # 1) por selector textual
+    try:
+        btn = page.locator(
+            "button, a, input[type='button'], input[type='submit'], [role='button']"
+        ).filter(has_text=re.compile(r"finalizar\s+reserva", re.I)).first
+        if btn.count() > 0:
+            try:
+                btn.click(timeout=5000)
+            except PWTimeout:
+                _cerrar_modales(page, debug=debug)
+                btn.click(timeout=5000, force=True)
+            print("      ✓ FINALIZAR RESERVA pulsado")
+            return True
+    except Exception:
+        pass
+    # 2) por get_by_role con nombre accesible
+    try:
+        btn = page.get_by_role(
+            "button", name=re.compile(r"finalizar\s+reserva", re.I)
+        ).first
+        try:
+            btn.click(timeout=5000)
+        except PWTimeout:
+            _cerrar_modales(page, debug=debug)
+            btn.click(timeout=5000, force=True)
+        print("      ✓ FINALIZAR RESERVA pulsado (por role)")
+        return True
+    except Exception as e:
+        print(f"      ✗ No encuentro botón FINALIZAR RESERVA: {e}")
+        return False
+
+
 def intentar_reserva(page, context, linea_hotel, debug=False):
     _cerrar_modales(page, debug=debug)
     print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
@@ -1125,33 +1226,25 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
             page.wait_for_load_state("networkidle", timeout=15000)
             nueva = page
             usa_nueva_pestana = False
+
         nueva.wait_for_timeout(2500)
         _cerrar_modales(nueva, debug=debug)
         if debug:
             shot(nueva, "04_pagina_reserva", debug)
-        checkboxes = nueva.locator("input[type='checkbox']")
-        n = checkboxes.count()
-        print(f"      Checkboxes encontradas: {n}")
-        marcadas = 0
-        for i in range(n):
-            cb = checkboxes.nth(i)
-            try:
-                if cb.is_visible() and not cb.is_checked():
-                    cb.check(timeout=3000)
-                    marcadas += 1
-                    print(f"      ✓ Checkbox {i+1} marcada")
-            except Exception as e:
-                print(f"      (checkbox {i+1} no marcada: {e})")
+
+        # --- Marcar TODOS los checkboxes visibles (incluidas las 2 esperadas) ---
+        marcadas, visibles = _marcar_todos_los_checkboxes(nueva, debug=debug)
+        if visibles == 0:
+            print("      ⚠ No aparecen checkboxes; continúo igualmente.")
+
         nueva.wait_for_timeout(1000)
         _cerrar_modales(nueva, debug=debug)
         if debug:
             shot(nueva, "05_checkboxes_marcadas", debug)
-        print("      → Buscando FINALIZAR RESERVA...")
-        btn_final = nueva.locator(
-            "button, a, input[type='button'], input[type='submit'], [role='button']"
-        ).filter(has_text=re.compile(r"finalizar\s+reserva", re.I)).first
-        if btn_final.count() == 0:
-            print("      ✗ No encuentro botón FINALIZAR RESERVA")
+
+        # --- FINALIZAR RESERVA ---
+        ok_final = _pulsar_finalizar_reserva(nueva, debug=debug)
+        if not ok_final:
             if debug:
                 shot(nueva, "05_sin_boton_finalizar", debug)
             if usa_nueva_pestana:
@@ -1160,12 +1253,7 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
                 except Exception:
                     pass
             return False
-        try:
-            btn_final.click(timeout=5000)
-        except PWTimeout:
-            _cerrar_modales(nueva, debug=debug)
-            btn_final.click(timeout=5000, force=True)
-        print("      ✓ FINALIZAR RESERVA pulsado")
+
         nueva.wait_for_timeout(3000)
         if debug:
             shot(nueva, "06_finalizado", debug)
@@ -1245,6 +1333,9 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                 if not lineas_a_reservar:
                     continue
                 for linea in lineas_a_reservar:
+                    if SOLO_RESERVAR_4_ESTRELLAS and not es_hotel_4_estrellas(linea):
+                        print(f"      ⏭ [MUNDICOLOR] Omito reserva (no es 4★): {linea[:70]}")
+                        continue
                     print(f"      ↪ [MUNDICOLOR] Reserva día {d['dia']} de {d['mes']} "
                           f"({destino}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
@@ -1268,11 +1359,6 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
 # TURISMOSOCIAL: combo
 # ---------------------------------------------------------------------
 def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera=False):
-    """
-    Devuelve:
-        list[dict]  → combo OK, con los días verdes y de lista de espera
-        None        → combo OMITIDO (provincia no disponible, zona inválida, etc.)
-    """
     try:
         _cerrar_modales(page, debug=debug)
 
@@ -1320,9 +1406,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
 
         _cerrar_modales(page, debug=debug)
 
-        # --- Disponibles (verde) ---
         dias_verdes = page.evaluate(JS_DIAS_VERDES)
-        # --- Lista de espera (naranja / etiqueta) ---
         dias_espera = page.evaluate(JS_DIAS_LISTA_ESPERA)
 
         print(f"      [TS] días verdes en crudo (sin filtrar por meses): {len(dias_verdes)}")
@@ -1335,7 +1419,6 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             print(f"      [TS] meses espera detectados: {meses_espera[:12]}")
         _diagnostico_resultado_ts(page, debug=debug)
 
-        # Filtro temporal
         dias_temporal_ok = []
         for d in dias_verdes:
             if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=False):
@@ -1382,6 +1465,9 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 if not lineas_a_reservar:
                     continue
                 for linea in lineas_a_reservar:
+                    if SOLO_RESERVAR_4_ESTRELLAS and not es_hotel_4_estrellas(linea):
+                        print(f"      ⏭ [TURISMOSOCIAL] Omito reserva (no es 4★): {linea[:70]}")
+                        continue
                     tipo = "espera" if d.get("en_lista_espera") else "disponible"
                     print(f"      ↪ [TURISMOSOCIAL:{tipo}] Reserva día {d['dia']} de {d['mes']} "
                           f"({zona}/{provincia})")
@@ -1426,10 +1512,6 @@ def enviar_email(asunto, cuerpo, debug=False):
 
 
 def _seccion_cuerpo(res_seccion, combos):
-    """
-    Recorre TODOS los combos comprobados y muestra los días disponibles
-    (y los de lista de espera en TurismoSocial, marcados como tal).
-    """
     if not res_seccion:
         return "(sin datos)"
 
@@ -1506,6 +1588,8 @@ def comprobar(debug=False, solo=None):
                 print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
     print(f"→ TurismoSocial: disponibles meses = {sorted(MESES_TURISMOSOCIAL)}")
     print(f"→ TurismoSocial: lista de espera meses = {sorted(MESES_TURISMOSOCIAL_ESPERA)}")
+    if SOLO_RESERVAR_4_ESTRELLAS:
+        print("⚠️  SOLO_RESERVAR_4_ESTRELLAS = True → solo se reservará si el hotel es 4★")
     if PROBAR_EMAIL_SIN_FILTRO:
         print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → email aunque no haya hoteles objetivo")
     if HACER_RESERVA:
@@ -1575,6 +1659,7 @@ def comprobar(debug=False, solo=None):
                 "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                 "hacer_reserva": HACER_RESERVA,
                 "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
+                "solo_reservar_4_estrellas": SOLO_RESERVAR_4_ESTRELLAS,
                 "filtro_reserva_por_destino": {
                     k: _filtro_serializable(v) for k, v in FILTRO_RESERVA_POR_DESTINO.items()
                 },
@@ -1660,6 +1745,7 @@ def comprobar(debug=False, solo=None):
                     "modo_prueba_sin_filtro": PROBAR_EMAIL_SIN_FILTRO,
                     "hacer_reserva": HACER_RESERVA,
                     "probar_reserva_sin_filtro": PROBAR_RESERVA_SIN_FILTRO,
+                    "solo_reservar_4_estrellas": SOLO_RESERVAR_4_ESTRELLAS,
                     "meses_interes": sorted(MESES_TURISMOSOCIAL),
                     "meses_interes_espera": sorted(MESES_TURISMOSOCIAL_ESPERA),
                     "combos_comprobados": [
