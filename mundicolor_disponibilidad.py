@@ -27,7 +27,7 @@ URL_MUNDICOLOR     = "https://www.mundicolor.es/availability"
 URL_TURISMOSOCIAL  = "https://www.turismosocial.es/availability"
 URL = URL_MUNDICOLOR  # alias legacy
 
-# ---------- ZONA HORARIA (GMT+2, penÃ­nsula) ----------
+# ---------- ZONA HORARIA (GMT+2, península) ----------
 TZ_ES = timezone(timedelta(hours=2))
 
 
@@ -67,21 +67,21 @@ COMBOS = [
 ZONAS_TURISMOSOCIAL = ["Costas"]
 PROVINCIAS_TURISMOSOCIAL = [
     "Alicante",
-    "AlmerÃ­a",
+    "Almería",
     "Cadiz",
     "Gran Canaria",
     "Granada",
     "Huelva",
     "I. Mallorca",
     "Madrid",
-    "MÃ¡laga",
+    "Málaga",
     "Murcia",
     "Santa Cruz de Tenerife",
 ]
 # Reglas TurismoSocial / Costas:
 #   - Mes: abril (4) a octubre (10), ambos inclusive.
-#   - Estancia: exactamente 10 dÃ­as.
-#   - Lista de espera: cualquier posiciÃ³n vale.
+#   - Estancia: exactamente 10 días.
+#   - Lista de espera: cualquier posición vale.
 MESES_TURISMOSOCIAL = {4, 5, 6, 7, 8, 9, 10}
 DIAS_ESTANCIA_TS = 10
 MAX_FALLOS_CONSECUTIVOS_TS = 3
@@ -94,14 +94,14 @@ HOTELES_OBJETIVO = [
     "Alua Gran Camp de Mar",
     "Samos",
     "Indico Rock",
-    "Alua CalviÃ ",
+    "Alua Calvià",
     "AluaSun Continental Park",
     "Sol Guadalupe Magaluf",
     "Globales Almirante Farragut",
     "Bakour Fuerteventura La Pared",
     "Parque Vacacional Eden",
     # --- nuevos ---
-    "BergantÃ­n",
+    "Bergantín",
     "Mar Amantis",
     "Club Hotel Aguamarina",
     "BLUESEA Aloe Corralejo",
@@ -274,7 +274,7 @@ def _dump_debug(page, name):
             except Exception as e:
                 print(f"      [debug] no pude volcar frame {fi}: {e}")
     except Exception as e:
-        print(f"      [debug] dump fallÃ³: {e}")
+        print(f"      [debug] dump falló: {e}")
 
 
 def _diagnostico_resultado_ts(page, debug=False):
@@ -352,10 +352,10 @@ def hotel_match_estricto(linea):
 # ---------------------------------------------------------------------
 PATRONES_4_ESTRELLAS = [
     r"\b4\s*\*",
-    r"\b4\s*â˜…",
+    r"\b4\s*★",
     r"\(\s*4\s*\*\s*\)",
     r"\b4\s*estrellas?\b",
-    r"\bcategor[iÃ­]a\s*4\b",
+    r"\bcategor[ií]a\s*4\b",
     r"(?<!\*)\*{4}(?!\*)",
 ]
 
@@ -371,10 +371,10 @@ def es_hotel_4_estrellas(linea):
 
 
 # ---------------------------------------------------------------------
-# ESTANCIA: 10 DÃAS
+# ESTANCIA: 10 DÍAS
 # ---------------------------------------------------------------------
 PATRONES_DIAS_ESTANCIA = [
-    r"\b(\d{1,2})\s*d[iÃ­]as?\b",
+    r"\b(\d{1,2})\s*d[ií]as?\b",
     r"\bestancia\s*(?:de\s*)?(\d{1,2})\b",
     r"\b(\d{1,2})\s*noches?\b",
 ]
@@ -416,7 +416,7 @@ def debe_reservar_turismosocial(mes_str, en_lista_espera=False):
     """
     TurismoSocial / Costas:
       - Mes entre abril y octubre (ambos inclusive).
-      - PosiciÃ³n de lista de espera ignorada (cualquier posiciÃ³n vale).
+      - Posición de lista de espera ignorada (cualquier posición vale).
     """
     ma = mes_anio(mes_str)
     if not ma:
@@ -551,16 +551,16 @@ def esperar_captcha(page, debug=False, timeout_s=CAPTCHA_TIMEOUT_S):
     if not hay_captcha_visible():
         return True
 
-    print("   âš ï¸  CAPTCHA detectado. ResuÃ©lvelo MANUALMENTE en la ventana del navegador.")
+    print("   ⚠️  CAPTCHA detectado. Resuélvelo MANUALMENTE en la ventana del navegador.")
     t0 = time.time()
     while (time.time() - t0) < timeout_s:
         if captcha_marcado() and not hay_captcha_visible():
-            print("   âœ“ Captcha resuelto, continÃºo.")
+            print("   ✓ Captcha resuelto, continúo.")
             page.wait_for_timeout(2000)
             return True
         page.wait_for_timeout(2000)
 
-    print("   âœ— Timeout esperando el captcha. Sigo de todas formas.")
+    print("   ✗ Timeout esperando el captcha. Sigo de todas formas.")
     return False
 
 
@@ -606,9 +606,9 @@ def elegir_select(page, selector, opcion, obligatorio=True, debug=False):
             ctl.select_option(label=t)
             page.wait_for_timeout(1200)
             if debug:
-                print(f"      âœ“ {selector} = '{t}'")
+                print(f"      ✓ {selector} = '{t}'")
             return True
-    msg = f"'{opcion}' no estÃ¡ en {selector}: {textos}"
+    msg = f"'{opcion}' no está en {selector}: {textos}"
     if obligatorio:
         raise RuntimeError(msg)
     return False
@@ -690,13 +690,13 @@ def elegir_por_contenido(page, opcion, etiqueta,
         if obligatorio:
             _dump_debug(page, f"no_select_{etiqueta}")
             raise RuntimeError(
-                f"No encuentro ningÃºn <select> con la opciÃ³n '{opcion}' ({etiqueta})")
+                f"No encuentro ningún <select> con la opción '{opcion}' ({etiqueta})")
         return False
     try:
         sel.select_option(label=texto)
         page.wait_for_timeout(1200)
         if debug:
-            print(f"      âœ“ {etiqueta} = '{texto}'")
+            print(f"      ✓ {etiqueta} = '{texto}'")
         return True
     except Exception as e:
         if obligatorio:
@@ -706,7 +706,7 @@ def elegir_por_contenido(page, opcion, etiqueta,
 
 
 # ---------------------------------------------------------------------
-# BOTÃ“N BUSCAR
+# BOTÓN BUSCAR
 # ---------------------------------------------------------------------
 CAND_BUSCAR_TS = ["#product-searcher-btn-accreditation", "#product-searcher-btn",
                   'button:has-text("Buscar")', 'button:has-text("Consultar")',
@@ -746,7 +746,7 @@ def _pulsar_buscar_flexible(page, debug=False):
         _cerrar_modales(page, debug=debug)
         return True
     except Exception as e:
-        print(f"      âœ— No encuentro botÃ³n BUSCAR: {e}")
+        print(f"      ✗ No encuentro botón BUSCAR: {e}")
         _dump_debug(page, "no_boton_buscar")
         return False
 
@@ -784,12 +784,12 @@ def _login_pasajeros(page, debug=False):
             print("      (no veo #addPaxIpt, intento igualmente rellenar por fallbacks)")
 
     for i, p in enumerate(PASAJEROS, 1):
-        print(f"      Login pasajero {i} ({p['dni']})â€¦")
+        print(f"      Login pasajero {i} ({p['dni']})…")
         rellenar_campo(page, re.compile(r"DNI", re.I),   p["dni"],   FALLBACK_DNI,   debug)
         rellenar_campo(page, re.compile(r"Clave", re.I), p["clave"], FALLBACK_CLAVE, debug)
-        page.get_by_text("AÃ±adir", exact=False).first.click()
+        page.get_by_text("Añadir", exact=False).first.click()
         page.wait_for_timeout(600)
-        err = page.get_by_text(re.compile(r"ya ha sido introducido|no es vÃ¡lido", re.I)).first
+        err = page.get_by_text(re.compile(r"ya ha sido introducido|no es válido", re.I)).first
         if err.count() and err.is_visible():
             raise RuntimeError(f"La web rechaza al pasajero {i} ({p['dni']}): '{err.inner_text()}'")
 
@@ -846,7 +846,7 @@ def aplicar_destino_provincia_y_buscar(page, destino, provincia, debug):
 
 
 def flujo_completo(page, destino, provincia, debug, con_login=True):
-    print("   â†’ Abriendo Mundicolorâ€¦")
+    print("   → Abriendo Mundicolor…")
     page.goto(URL_MUNDICOLOR, wait_until="networkidle")
     page.wait_for_timeout(1500)
     cookies(page, debug=debug)
@@ -867,8 +867,8 @@ def flujo_completo(page, destino, provincia, debug, con_login=True):
 
 # ------------- TURISMOSOCIAL -------------
 def _regex_flexible_tildes(s):
-    subs = {"a": "[aÃ¡]", "e": "[eÃ©]", "i": "[iÃ­]", "o": "[oÃ³]", "u": "[uÃº]",
-            "A": "[aÃ¡AÃ]", "E": "[eÃ©EÃ‰]", "I": "[iÃ­IÃ]", "O": "[oÃ³OÃ“]", "U": "[uÃºUÃš]"}
+    subs = {"a": "[aá]", "e": "[eé]", "i": "[ií]", "o": "[oó]", "u": "[uú]",
+            "A": "[aáAÁ]", "E": "[eéEÉ]", "I": "[iíIÍ]", "O": "[oóOÓ]", "U": "[uúUÚ]"}
     return "".join(subs.get(c, re.escape(c)) for c in s)
 
 
@@ -886,7 +886,7 @@ def _esperar_formulario_ts(page, timeout_s=10, debug=False):
 
 
 def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
-    print("   â†’ Abriendo TurismoSocialâ€¦")
+    print("   → Abriendo TurismoSocial…")
     page.goto(URL_TURISMOSOCIAL, wait_until="networkidle")
     page.wait_for_timeout(2000)
     cookies(page, debug=debug)
@@ -899,7 +899,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
     _desmarcar_mascotas(page)
 
     if not _esperar_formulario_ts(page, timeout_s=15, debug=debug):
-        print("      âœ— Formulario TS no aparece tras 15s.")
+        print("      ✗ Formulario TS no aparece tras 15s.")
         _dump_debug(page, "ts_form_no_aparece")
         return False
 
@@ -919,7 +919,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
                              obligatorio=True, debug=debug,
                              regex_fallback=r"sin\s+transporte")
     except Exception as e:
-        print(f"      âœ— Transporte: {e}")
+        print(f"      ✗ Transporte: {e}")
         return False
 
     try:
@@ -934,7 +934,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
         elegir_por_contenido(page, zona, "ZonaDestino",
                              obligatorio=True, debug=debug, regex_fallback=regex_zona)
     except Exception as e:
-        print(f"      âœ— Zona '{zona}': {e}")
+        print(f"      ✗ Zona '{zona}': {e}")
         return False
 
     page.wait_for_timeout(1500)
@@ -949,7 +949,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
     regex_prov = _regex_flexible_tildes(base)
     if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
         opts = _listar_opciones_select(page, "#province-accreditation")
-        print(f"      â­ Provincia '{provincia}' no estÃ¡ en el select de '{zona}'. Opciones: {opts}")
+        print(f"      ⏭ Provincia '{provincia}' no está en el select de '{zona}'. Opciones: {opts}")
         return False
 
     print(f"      Provincia = '{provincia}'")
@@ -957,7 +957,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
         elegir_por_contenido(page, provincia, "Provincia",
                              obligatorio=True, debug=debug, regex_fallback=regex_prov)
     except Exception as e:
-        print(f"      âœ— Provincia '{provincia}' en zona '{zona}': {e}")
+        print(f"      ✗ Provincia '{provincia}' en zona '{zona}': {e}")
         return False
 
     if not _pulsar_buscar_flexible(page, debug):
@@ -966,7 +966,7 @@ def flujo_completo_turismosocial(page, zona, provincia, debug, con_login=True):
 
 
 # ---------------------------------------------------------------------
-# EXTRACCIÃ“N
+# EXTRACCIÓN
 # ---------------------------------------------------------------------
 JS_DIAS_VERDES = """
 () => {
@@ -1022,7 +1022,7 @@ JS_HOTELES_DISPONIBLES = r"""
   const out = [];
   const seen = new Set();
   const limpiar = (s) => (s || '').replace(/\s+/g, ' ').trim();
-  const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[Ã¡a]s|no|s[iÃ­]|ok|cerrar|reservar|apuntarse|lista\s+de\s+espera|darse\s+de\s+baja)$/i.test(l);
+  const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[áa]s|no|s[ií]|ok|cerrar|reservar|apuntarse|lista\s+de\s+espera|darse\s+de\s+baja)$/i.test(l);
 
   const todos = [...document.querySelectorAll(
     'button, a, [role="button"], input[type="button"], input[type="submit"]'
@@ -1038,7 +1038,7 @@ JS_HOTELES_DISPONIBLES = r"""
     let nivel = 0;
     while (cont && nivel < 8) {
       const txt = cont.innerText || '';
-      if (/â‚¬/.test(txt) && txt.length < 3000) break;
+      if (/€/.test(txt) && txt.length < 3000) break;
       cont = cont.parentElement;
       nivel++;
     }
@@ -1052,11 +1052,11 @@ JS_HOTELES_DISPONIBLES = r"""
     if (!nombre || seen.has(nombre)) continue;
     seen.add(nombre);
 
-    const precioM = txt.match(/(\d{2,5}(?:[.,]\d{1,2})?)\s*â‚¬/);
-    const precio = precioM ? (precioM[1] + ' â‚¬') : '';
+    const precioM = txt.match(/(\d{2,5}(?:[.,]\d{1,2})?)\s*€/);
+    const precio = precioM ? (precioM[1] + ' €') : '';
 
     const extras = lineas.slice(1)
-      .filter(l => !/\d+\s*â‚¬/.test(l))
+      .filter(l => !/\d+\s*€/.test(l))
       .slice(0, 5);
 
     out.push({
@@ -1113,7 +1113,7 @@ def detalle_dia(page, idx, debug=False, attr="libre"):
         try:
             loc.click(timeout=8000, force=True)
         except Exception as e:
-            print(f"      Â· No pude abrir el detalle del dÃ­a ({attr}) {idx}: {e}")
+            print(f"      · No pude abrir el detalle del día ({attr}) {idx}: {e}")
             return []
     page.wait_for_timeout(1800)
     _cerrar_modales(page, debug=debug)
@@ -1122,7 +1122,7 @@ def detalle_dia(page, idx, debug=False, attr="libre"):
         hoteles = page.evaluate(JS_HOTELES_DISPONIBLES)
     except Exception as e:
         if debug:
-            print(f"      [debug] extractor hoteles disponibles fallÃ³: {e}")
+            print(f"      [debug] extractor hoteles disponibles falló: {e}")
         return []
 
     lineas = []
@@ -1160,7 +1160,7 @@ def _marcar_todos_los_checkboxes(page, debug=False, timeout_s=8):
             visibles += 1
             if cb.is_checked():
                 marcadas += 1
-                print(f"      âœ“ Checkbox {i+1} ya estaba marcada")
+                print(f"      ✓ Checkbox {i+1} ya estaba marcada")
                 continue
             try:
                 cb.check(timeout=2500)
@@ -1171,17 +1171,17 @@ def _marcar_todos_los_checkboxes(page, debug=False, timeout_s=8):
                     cb.click(timeout=2500, force=True)
             if cb.is_checked():
                 marcadas += 1
-                print(f"      âœ“ Checkbox {i+1} marcada")
+                print(f"      ✓ Checkbox {i+1} marcada")
             else:
                 print(f"      (checkbox {i+1} no se pudo marcar)")
         except Exception as e:
             print(f"      (checkbox {i+1} error: {e})")
-    print(f"      â†’ Checkboxes visibles={visibles}, marcadas={marcadas}")
+    print(f"      → Checkboxes visibles={visibles}, marcadas={marcadas}")
     return marcadas, visibles
 
 
 def _pulsar_finalizar_reserva(page, debug=False):
-    print("      â†’ Buscando FINALIZAR RESERVA...")
+    print("      → Buscando FINALIZAR RESERVA...")
     try:
         btn = page.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
@@ -1192,7 +1192,7 @@ def _pulsar_finalizar_reserva(page, debug=False):
             except PWTimeout:
                 _cerrar_modales(page, debug=debug)
                 btn.click(timeout=5000, force=True)
-            print("      âœ“ FINALIZAR RESERVA pulsado")
+            print("      ✓ FINALIZAR RESERVA pulsado")
             return True
     except Exception:
         pass
@@ -1205,16 +1205,16 @@ def _pulsar_finalizar_reserva(page, debug=False):
         except PWTimeout:
             _cerrar_modales(page, debug=debug)
             btn.click(timeout=5000, force=True)
-        print("      âœ“ FINALIZAR RESERVA pulsado (por role)")
+        print("      ✓ FINALIZAR RESERVA pulsado (por role)")
         return True
     except Exception as e:
-        print(f"      âœ— No encuentro botÃ³n FINALIZAR RESERVA: {e}")
+        print(f"      ✗ No encuentro botón FINALIZAR RESERVA: {e}")
         return False
 
 
 def intentar_reserva(page, context, linea_hotel, debug=False):
     _cerrar_modales(page, debug=debug)
-    print(f"      â†’ Intentando reserva para: {linea_hotel[:80]}...")
+    print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
     try:
         partes = [p.strip() for p in linea_hotel.split("|") if p.strip()]
         nombre_hotel = partes[0] if partes else linea_hotel[:60]
@@ -1226,7 +1226,7 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
                 fila = loc.last
                 break
         if not fila:
-            print("      âœ— No encuentro la fila del hotel")
+            print("      ✗ No encuentro la fila del hotel")
             return False
         btn_sel = fila.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
@@ -1234,20 +1234,20 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if btn_sel.count() == 0:
             btn_sel = fila.get_by_role("button", name=re.compile(r"seleccionar", re.I)).first
         if btn_sel.count() == 0:
-            print("      âœ— No encuentro botÃ³n SELECCIONAR en la fila")
+            print("      ✗ No encuentro botón SELECCIONAR en la fila")
             if debug:
                 shot(page, "04_sin_boton_seleccionar", debug)
             return False
-        print("      â†’ Pulsando SELECCIONAR...")
+        print("      → Pulsando SELECCIONAR...")
         _cerrar_modales(page, debug=debug)
         try:
             with context.expect_page(timeout=8000) as nueva_info:
                 btn_sel.click()
             nueva = nueva_info.value
-            print("      âœ“ Nueva pestaÃ±a abierta")
+            print("      ✓ Nueva pestaña abierta")
             usa_nueva_pestana = True
         except PWTimeout:
-            print("      (no se abriÃ³ nueva pestaÃ±a, asumo navegaciÃ³n en la misma)")
+            print("      (no se abrió nueva pestaña, asumo navegación en la misma)")
             try:
                 btn_sel.click(timeout=8000)
             except PWTimeout:
@@ -1264,7 +1264,7 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
 
         marcadas, visibles = _marcar_todos_los_checkboxes(nueva, debug=debug)
         if visibles == 0:
-            print("      âš  No aparecen checkboxes; continÃºo igualmente.")
+            print("      ⚠ No aparecen checkboxes; continúo igualmente.")
 
         nueva.wait_for_timeout(1000)
         _cerrar_modales(nueva, debug=debug)
@@ -1362,12 +1362,12 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                     continue
                 for linea in lineas_a_reservar:
                     if SOLO_RESERVAR_4_ESTRELLAS_MUNDICOLOR and not es_hotel_4_estrellas(linea):
-                        print(f"      â­ [MUNDICOLOR] Omito reserva (no es 4â˜…): {linea[:70]}")
+                        print(f"      ⏭ [MUNDICOLOR] Omito reserva (no es 4★): {linea[:70]}")
                         continue
-                    print(f"      â†ª [MUNDICOLOR] Reserva dÃ­a {d['dia']} de {d['mes']} "
+                    print(f"      ↪ [MUNDICOLOR] Reserva día {d['dia']} de {d['mes']} "
                           f"({destino}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
-                    print("      âœ“ Reserva completada" if ok else "      âœ— Reserva fallida")
+                    print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
                     try:
                         if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
                             return dias_todos
@@ -1404,7 +1404,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                                      obligatorio=True, debug=debug,
                                      regex_fallback=regex_zona)
             except Exception as e:
-                print(f"      âœ— Zona '{zona}': {e}")
+                print(f"      ✗ Zona '{zona}': {e}")
                 return None
             page.wait_for_timeout(1500)
 
@@ -1418,7 +1418,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             regex_prov = _regex_flexible_tildes(base)
             if not _opcion_disponible(page, "#province-accreditation", provincia, regex_prov):
                 opts = _listar_opciones_select(page, "#province-accreditation")
-                print(f"      â­ Provincia '{provincia}' no estÃ¡ en el select. Opciones: {opts}")
+                print(f"      ⏭ Provincia '{provincia}' no está en el select. Opciones: {opts}")
                 return None
 
             try:
@@ -1426,7 +1426,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                                      obligatorio=True, debug=debug,
                                      regex_fallback=regex_prov)
             except Exception as e:
-                print(f"      âœ— Provincia '{provincia}': {e}")
+                print(f"      ✗ Provincia '{provincia}': {e}")
                 return None
 
             if not _pulsar_buscar_flexible(page, debug):
@@ -1437,8 +1437,8 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
         dias_verdes = page.evaluate(JS_DIAS_VERDES)
         dias_espera = page.evaluate(JS_DIAS_LISTA_ESPERA)
 
-        print(f"      [TS] dÃ­as verdes en crudo: {len(dias_verdes)}")
-        print(f"      [TS] dÃ­as lista de espera en crudo: {len(dias_espera)}")
+        print(f"      [TS] días verdes en crudo: {len(dias_verdes)}")
+        print(f"      [TS] días lista de espera en crudo: {len(dias_espera)}")
         if dias_verdes:
             meses_verdes = sorted({(d.get('mes') or '?') for d in dias_verdes})
             print(f"      [TS] meses verdes detectados: {meses_verdes[:12]}")
@@ -1447,7 +1447,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             print(f"      [TS] meses espera detectados: {meses_espera[:12]}")
         _diagnostico_resultado_ts(page, debug=debug)
 
-        # Filtro por mes (abrilâ€“octubre), tanto para verdes como para espera.
+        # Filtro por mes (abril–octubre), tanto para verdes como para espera.
         dias_temporal_ok = []
         for d in dias_verdes:
             if debe_reservar_turismosocial(d.get("mes", ""), en_lista_espera=False):
@@ -1460,9 +1460,9 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
 
         if not dias_temporal_ok:
             if not dias_verdes and not dias_espera:
-                print("      Â· sin dÃ­as (ni verdes ni de lista de espera)")
+                print("      · sin días (ni verdes ni de lista de espera)")
             else:
-                print(f"      Â· sin dÃ­as (habÃ­a dÃ­as, pero fuera de {sorted(MESES_TURISMOSOCIAL)})")
+                print(f"      · sin días (había días, pero fuera de {sorted(MESES_TURISMOSOCIAL)})")
 
         dias_todos = []
         for d in dias_temporal_ok:
@@ -1496,30 +1496,30 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 continue
 
             for linea in lineas_a_reservar:
-                # 1) Â¿4â˜…?
+                # 1) ¿4★?
                 if SOLO_RESERVAR_4_ESTRELLAS_TS and not es_hotel_4_estrellas(linea):
-                    print(f"      â­ [TURISMOSOCIAL] Omito reserva (no es 4â˜…): {linea[:70]}")
+                    print(f"      ⏭ [TURISMOSOCIAL] Omito reserva (no es 4★): {linea[:70]}")
                     continue
 
-                # 2) Â¿Estancia de 10 dÃ­as?
+                # 2) ¿Estancia de 10 días?
                 dias = extraer_dias_estancia(linea, " ".join(d.get("detalle", [])))
                 if dias is None or dias != DIAS_ESTANCIA_TS:
-                    print(f"      â­ [TURISMOSOCIAL] Omito reserva "
-                          f"(estancia {dias if dias is not None else '?'} dÃ­as â‰  {DIAS_ESTANCIA_TS}): "
+                    print(f"      ⏭ [TURISMOSOCIAL] Omito reserva "
+                          f"(estancia {dias if dias is not None else '?'} días ≠ {DIAS_ESTANCIA_TS}): "
                           f"{linea[:70]}")
                     continue
 
-                # 3) Lista de espera: cualquier posiciÃ³n vale (sin restricciÃ³n)
+                # 3) Lista de espera: cualquier posición vale (sin restricción)
                 if not debe_reservar_turismosocial(
                         d.get("mes", ""),
                         en_lista_espera=d.get("en_lista_espera", False)):
                     continue
 
                 tipo = "espera" if d.get("en_lista_espera") else "disponible"
-                print(f"      â†ª [TURISMOSOCIAL:{tipo}] Reserva dÃ­a {d['dia']} de "
-                      f"{d['mes']} ({zona}/{provincia}) Â· {dias} dÃ­as")
+                print(f"      ↪ [TURISMOSOCIAL:{tipo}] Reserva día {d['dia']} de "
+                      f"{d['mes']} ({zona}/{provincia}) · {dias} días")
                 ok = intentar_reserva(page, context, linea, debug)
-                print("      âœ“ Reserva completada" if ok else "      âœ— Reserva fallida")
+                print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
                 try:
                     if page.locator("select:visible").count() == 0:
                         return dias_todos
@@ -1577,17 +1577,17 @@ def _seccion_cuerpo(res_seccion, combos):
 
         lineas.append(f"--- {dest} / {prov} ---")
         if not dias_combo:
-            lineas.append("  (sin dÃ­as disponibles)")
+            lineas.append("  (sin días disponibles)")
         else:
             for d in dias_combo:
                 hoteles = ", ".join(d.get("hoteles_objetivo", []))
-                prefijo = "  â€¢ "
+                prefijo = "  • "
                 if d.get("en_lista_espera"):
-                    prefijo = "  â³ [LISTA DE ESPERA] "
+                    prefijo = "  ⏳ [LISTA DE ESPERA] "
                 if hoteles:
-                    lineas.append(f"{prefijo}DÃ­a {d['dia']} de {d['mes']}   [{hoteles}]")
+                    lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}   [{hoteles}]")
                 else:
-                    lineas.append(f"{prefijo}DÃ­a {d['dia']} de {d['mes']}")
+                    lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}")
                 for l in d.get("detalle", []):
                     lineas.append(f"      {l}")
         lineas.append("")
@@ -1622,32 +1622,32 @@ def comprobar(debug=False, solo=None):
     if solo:
         combos = [(d, p) for (d, p) in COMBOS if d.upper() == solo.upper()]
         if not combos:
-            print(f"[aviso] '{solo}' no estÃ¡ en COMBOS")
+            print(f"[aviso] '{solo}' no está en COMBOS")
             return None
 
-    print("â†’ Lanzando Chromiumâ€¦")
-    print(f"â†’ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
-    print("â†’ Filtro RESERVA por destino (Mundicolor):")
+    print("→ Lanzando Chromium…")
+    print(f"→ Hoteles objetivo ({len(HOTELES_OBJETIVO)}): {HOTELES_OBJETIVO}")
+    print("→ Filtro RESERVA por destino (Mundicolor):")
     for dest in ("BALEARES", "CANARIAS"):
         print(f"     {dest}: {descripcion_filtro_reserva(dest)}")
         for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
             if d == dest:
-                print(f"       Â· {p}: {descripcion_filtro_reserva(d, p)}")
-    print("â†’ TurismoSocial: zonas =", ZONAS_TURISMOSOCIAL)
-    print(f"â†’ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abrilâ€“octubre)")
-    print(f"â†’ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} dÃ­as")
-    print("â†’ TurismoSocial: lista de espera SIN restricciÃ³n de posiciÃ³n")
-    print("â†’ Email: SOLO se envÃ­a si hay al menos un dÃ­a DISPONIBLE (no basta lista de espera)")
+                print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
+    print("→ TurismoSocial: zonas =", ZONAS_TURISMOSOCIAL)
+    print(f"→ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abril–octubre)")
+    print(f"→ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} días")
+    print("→ TurismoSocial: lista de espera SIN restricción de posición")
+    print("→ Email: SOLO se envía si hay al menos un día DISPONIBLE (no basta lista de espera)")
     if SOLO_RESERVAR_4_ESTRELLAS_TS:
-        print("âš ï¸  Filtro 4â˜… activo SOLO en TurismoSocial")
+        print("⚠️  Filtro 4★ activo SOLO en TurismoSocial")
     if SOLO_RESERVAR_4_ESTRELLAS_MUNDICOLOR:
-        print("âš ï¸  Filtro 4â˜… activo tambiÃ©n en Mundicolor")
+        print("⚠️  Filtro 4★ activo también en Mundicolor")
     if PROBAR_EMAIL_SIN_FILTRO:
-        print("âš ï¸  PROBAR_EMAIL_SIN_FILTRO = True â†’ se aceptan todos los hoteles como objetivo")
+        print("⚠️  PROBAR_EMAIL_SIN_FILTRO = True → se aceptan todos los hoteles como objetivo")
     if HACER_RESERVA:
-        print("âš ï¸  HACER_RESERVA = True â†’ se intentarÃ¡ reservar")
+        print("⚠️  HACER_RESERVA = True → se intentará reservar")
         if PROBAR_RESERVA_SIN_FILTRO:
-            print("âš ï¸  PROBAR_RESERVA_SIN_FILTRO = True â†’ reserva con cualquier hotel")
+            print("⚠️  PROBAR_RESERVA_SIN_FILTRO = True → reserva con cualquier hotel")
 
     with sync_playwright() as pw:
         try:
@@ -1671,7 +1671,7 @@ def comprobar(debug=False, solo=None):
                         "domain": ".mundicolor.es",
                         "path": "/",
                     }])
-                    print("â†’ Cookie 'cookies aceptadas' inyectada antes del primer goto")
+                    print("→ Cookie 'cookies aceptadas' inyectada antes del primer goto")
             except Exception:
                 pass
 
@@ -1679,23 +1679,23 @@ def comprobar(debug=False, solo=None):
         try:
             # ============ MUNDICOLOR ============
             print(f"\n{'=' * 25} MUNDICOLOR {'=' * 25}")
-            print(f"â†’ {len(combos)} combinaciones a comprobar (misma pestaÃ±a)\n")
+            print(f"→ {len(combos)} combinaciones a comprobar (misma pestaña)\n")
             todos = []
             todos_objetivo = []
             for i, (dest, prov) in enumerate(combos, 1):
                 print(f"[{i}/{len(combos)}] {dest} / {prov}")
                 dias = comprobar_combo(page, context, dest, prov, debug, primera=(i == 1))
                 if not dias:
-                    print("      Â· sin dÃ­as")
+                    print("      · sin días")
                 else:
                     for d in dias:
                         hoteles = d.get("hoteles_objetivo", [])
                         if hoteles:
-                            print(f"      ðŸŸ¢ DÃ­a {d['dia']} de {d['mes']}  â†’ OBJETIVO: {', '.join(hoteles)}")
+                            print(f"      🟢 Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
                         else:
-                            print(f"      âšª DÃ­a {d['dia']} de {d['mes']}  (sin hotel objetivo)")
+                            print(f"      ⚪ Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
                         for l in d["detalle"]:
-                            prefijo = "          Â· " if not hotel_match(l) else "          â˜… "
+                            prefijo = "          · " if not hotel_match(l) else "          ★ "
                             print(f"{prefijo}{l}")
                 todos.extend(dias)
                 todos_objetivo.extend([d for d in dias if d.get("es_objetivo")])
@@ -1739,7 +1739,7 @@ def comprobar(debug=False, solo=None):
             else:
                 combos_ts = [(z, p) for z in ZONAS_TURISMOSOCIAL for p in PROVINCIAS_TURISMOSOCIAL]
                 print(f"\n{'=' * 25} TURISMOSOCIAL {'=' * 25}")
-                print(f"â†’ {len(combos_ts)} combinaciones a comprobar (misma pestaÃ±a)\n")
+                print(f"→ {len(combos_ts)} combinaciones a comprobar (misma pestaña)\n")
 
                 todos_ts = []
                 todos_objetivo_ts = []
@@ -1749,7 +1749,7 @@ def comprobar(debug=False, solo=None):
                 n_dias_espera = 0
                 for i, (zona, prov) in enumerate(combos_ts, 1):
                     if abortado:
-                        print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  â­ (TurismoSocial abortado)")
+                        print(f"[{i}/{len(combos_ts)}] {zona} / {prov}  ⏭ (TurismoSocial abortado)")
                         continue
                     print(f"[{i}/{len(combos_ts)}] {zona} / {prov}")
                     dias = comprobar_combo_turismosocial(
@@ -1757,11 +1757,11 @@ def comprobar(debug=False, solo=None):
                     )
 
                     if dias is None:
-                        print("      â­ combo omitido")
+                        print("      ⏭ combo omitido")
                         n_omit += 1
                         fallos_consec += 1
                         if fallos_consec >= MAX_FALLOS_CONSECUTIVOS_TS:
-                            print(f"      âš  {fallos_consec} combos TS omitidos seguidos â†’ "
+                            print(f"      ⚠ {fallos_consec} combos TS omitidos seguidos → "
                                   f"abortando TurismoSocial para no alargar el script.")
                             abortado = True
                         continue
@@ -1771,24 +1771,24 @@ def comprobar(debug=False, solo=None):
                     n_dias_espera += sum(1 for d in dias if d.get("en_lista_espera"))
 
                     if not dias:
-                        print("      Â· sin dÃ­as")
+                        print("      · sin días")
                     else:
                         for d in dias:
                             hoteles = d.get("hoteles_objetivo", [])
-                            etiq = "â³ ESPERA" if d.get("en_lista_espera") else "ðŸŸ¢"
+                            etiq = "⏳ ESPERA" if d.get("en_lista_espera") else "🟢"
                             if hoteles:
-                                print(f"      {etiq} DÃ­a {d['dia']} de {d['mes']}  â†’ OBJETIVO: {', '.join(hoteles)}")
+                                print(f"      {etiq} Día {d['dia']} de {d['mes']}  → OBJETIVO: {', '.join(hoteles)}")
                             else:
-                                print(f"      {etiq} DÃ­a {d['dia']} de {d['mes']}  (sin hotel objetivo)")
+                                print(f"      {etiq} Día {d['dia']} de {d['mes']}  (sin hotel objetivo)")
                             for l in d["detalle"]:
-                                prefijo = "          Â· " if not hotel_match(l) else "          â˜… "
+                                prefijo = "          · " if not hotel_match(l) else "          ★ "
                                 print(f"{prefijo}{l}")
 
                     todos_ts.extend(dias)
                     todos_objetivo_ts.extend([d for d in dias if d.get("es_objetivo")])
 
-                print(f"\n  â†’ TS resumen: OK={n_ok}, omitidos={n_omit}, "
-                      f"dÃ­as totales={n_dias_total} (espera={n_dias_espera}), "
+                print(f"\n  → TS resumen: OK={n_ok}, omitidos={n_omit}, "
+                      f"días totales={n_dias_total} (espera={n_dias_espera}), "
                       f"abortado={abortado}")
 
                 resultado_ts = {
@@ -1844,7 +1844,7 @@ def mostrar(res, debug=False):
     res_mundi = res.get("mundicolor") or {}
     res_ts = res.get("turismosocial") or {}
 
-    # Contar dÃ­as DISPONIBLES (sin contar lista de espera) y dÃ­as en espera
+    # Contar días DISPONIBLES (sin contar lista de espera) y días en espera
     disp_mundi = res_mundi.get("disponibles", []) or []
     disp_ts = (res_ts or {}).get("disponibles", []) or []
 
@@ -1857,17 +1857,17 @@ def mostrar(res, debug=False):
     n_disponibles = n_disp_real_mundi + n_disp_real_ts
 
     print(f"\n[{res['fecha_consulta']}]")
-    print(f"  Mundicolor    : {n_disp_real_mundi} disponible(s) Â· {n_espera_mundi} en lista de espera")
-    print(f"  TurismoSocial : {n_disp_real_ts} disponible(s) Â· {n_espera_ts} en lista de espera")
+    print(f"  Mundicolor    : {n_disp_real_mundi} disponible(s) · {n_espera_mundi} en lista de espera")
+    print(f"  TurismoSocial : {n_disp_real_ts} disponible(s) · {n_espera_ts} en lista de espera")
 
-    ASUNTO = "[IMSERSO 2027] Disponibilidad hoteles islas y penÃ­nsula"
+    ASUNTO = "[IMSERSO 2027] Disponibilidad hoteles islas y península"
 
-    # Solo se envÃ­a el email si hay AL MENOS UN dÃ­a disponible (no basta con lista de espera)
+    # Solo se envía el email si hay AL MENOS UN día disponible (no basta con lista de espera)
     if n_disponibles == 0:
-        print("â†’ Sin hoteles disponibles (solo lista de espera o nada): NO se envÃ­a email.")
+        print("→ Sin hoteles disponibles (solo lista de espera o nada): NO se envía email.")
         return
 
-    print("\nâ†’ Enviando email resumen (Mundicolor + TurismoSocial)â€¦")
+    print("\n→ Enviando email resumen (Mundicolor + TurismoSocial)…")
     enviar_email(ASUNTO, construir_cuerpo_combinado(res), debug=debug)
 
 
@@ -1885,5 +1885,5 @@ if __name__ == "__main__":
         mostrar(comprobar(args.debug, solo=args.solo), debug=args.debug)
         if not args.watch:
             break
-        print(f"\nâ€¦ esperando {args.watch} min (Ctrl-C para salir)")
+        print(f"\n… esperando {args.watch} min (Ctrl-C para salir)")
         time.sleep(max(args.watch, 1) * 60)
