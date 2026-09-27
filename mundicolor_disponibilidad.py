@@ -63,6 +63,10 @@ COMBOS = [
 # ---------------------------------------------------------------------
 
 # -------------------- COMBOS TURISMOSOCIAL ---------------------------
+# COMPROBAR_TURISMOSOCIAL = False → esta web no se comprueba en absoluto
+# (ni se abre, ni se busca disponibilidad, ni sale en el email).
+COMPROBAR_TURISMOSOCIAL = False
+
 # Solo se prueba "Costas".
 ZONAS_TURISMOSOCIAL = ["Costas"]
 PROVINCIAS_TURISMOSOCIAL = [
@@ -121,19 +125,19 @@ SOLO_RESERVAR_4_ESTRELLAS_MUNDICOLOR = False  # Mundicolor: sin filtro de estrel
 # ---------------------------------------------------------------------
 
 FILTRO_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {3, 4, 5, 6, 7, 8, 9, 10}},
-    "CANARIAS": None,
+    "BALEARES": {"anio": 2027, "meses": {3, 4}},
+    "CANARIAS": {"anio": 2027, "meses": {4, 5, 6}},
 }
 
 FILTRO_RESERVA_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {4, 5, 6}},
-    "CANARIAS": {"anio": 2027, "meses": {3, 4, 5, 6, 10, 11}},
+    "BALEARES": {"anio": 2027, "meses": {3, 4}},
+    "CANARIAS": {"anio": 2027, "meses": {4, 5, 6}},
 }
 
-FILTRO_RESERVA_POR_PROVINCIA = {
-    ("BALEARES", "IBIZA"):   {"anio": 2027, "meses": {4, 5, 6}},
-    ("BALEARES", "MENORCA"): {"anio": 2027, "meses": {4, 5, 6}},
-}
+# Mismo rango de meses para todas las islas de cada destino, así que no
+# hace falta ningún filtro particular por provincia (se deja vacío para
+# que siempre se use FILTRO_RESERVA_POR_DESTINO).
+FILTRO_RESERVA_POR_PROVINCIA = {}
 # ---------------------------------------------------------------------
 
 MESES_ES = {
@@ -345,6 +349,32 @@ def hotel_match_estricto(linea):
         if re.search(r"(?<![a-z])" + re.escape(h_norm) + r"(?![a-z])", n):
             return h_orig
     return None
+
+
+# ---------------------------------------------------------------------
+# ESTADO DE LA FILA (Disponible / Completo / Lista de espera)
+# ---------------------------------------------------------------------
+def estado_linea(linea):
+    """Lee la etiqueta '[DISPONIBLE]'/'[COMPLETO]'/'[ESPERA]' que antepone
+    JS_HOTELES_DISPONIBLES a cada línea. Devuelve None si no la encuentra
+    (líneas antiguas o de otro origen)."""
+    m = re.match(r"^\s*\[(DISPONIBLE|COMPLETO|ESPERA|DESCONOCIDO)\]", linea or "", re.I)
+    return m.group(1).upper() if m else None
+
+
+def es_linea_disponible(linea):
+    """True solo si la fila está realmente Disponible (no Completo ni
+    Lista de espera). Si la línea no lleva etiqueta de estado (formato
+    antiguo), se asume disponible para no romper compatibilidad."""
+    estado = estado_linea(linea)
+    return estado is None or estado == "DISPONIBLE"
+
+
+def quitar_etiqueta_estado(linea):
+    """Quita el prefijo '[DISPONIBLE] ' / '[COMPLETO] ' / etc. de una línea,
+    dejando el resto (nombre del hotel, localidad, días, precio) intacto."""
+    return re.sub(r"^\s*\[(DISPONIBLE|COMPLETO|ESPERA|DESCONOCIDO)\]\s*\|?\s*",
+                  "", linea or "", flags=re.I)
 
 
 # ---------------------------------------------------------------------
@@ -1023,14 +1053,23 @@ JS_HOTELES_DISPONIBLES = r"""
   const seen = new Set();
   const limpiar = (s) => (s || '').replace(/\s+/g, ' ').trim();
   const esBasura = (l) => /^(seleccionar|ver\s+detalles?|ver\s+m[áa]s|no|s[ií]|ok|cerrar|reservar|apuntarse|lista\s+de\s+espera|darse\s+de\s+baja)$/i.test(l);
+  const esDisponible = (l) => /^disponible$/i.test(l);
+  const esCompleto = (l) => /^(completo|agotad[oa]s?|no\s+disponible)$/i.test(l);
+  const esEnEspera = (l) => /^(en\s+)?lista\s+de\s+espera$/i.test(l);
+  // Líneas de estado/metadata que NO son el nombre del hotel.
+  const esEstado = (l) => esDisponible(l) || esCompleto(l) || esEnEspera(l) || /^plazas?\s+limitadas?$/i.test(l);
+  const esDuracion = (l) => /^\d{1,2}\s*(d[ií]as?|noches?)$/i.test(l);
+  const esPrecio = (l) => /^\d{2,5}(?:[.,]\d{1,2})?\s*€$/.test(l);
 
+  // La acción de cada fila puede llamarse "ver detalles" o "Seleccionar"
+  // según la pantalla, así que aceptamos ambas.
   const todos = [...document.querySelectorAll(
     'button, a, [role="button"], input[type="button"], input[type="submit"]'
   )];
   const botones = todos.filter(b => {
     if (b.offsetParent === null) return false;
     const t = limpiar(b.innerText || b.textContent || b.value);
-    return /^seleccionar$/i.test(t);
+    return /^(ver\s+detalles?|seleccionar)$/i.test(t);
   });
 
   for (const b of botones) {
@@ -1045,24 +1084,50 @@ JS_HOTELES_DISPONIBLES = r"""
     if (!cont) continue;
 
     const txt = cont.innerText || '';
-    const lineas = txt.split(/\n+/).map(limpiar).filter(l => l && !esBasura(l));
+    const rawLineas = txt.split(/\n+/).map(limpiar).filter(Boolean);
+
+    // Estado de la fila (Disponible / Completo / Lista de espera).
+    let estado = 'desconocido';
+    if (rawLineas.some(esDisponible)) estado = 'disponible';
+    else if (rawLineas.some(esCompleto)) estado = 'completo';
+    else if (rawLineas.some(esEnEspera)) estado = 'espera';
+
+    // Quitamos basura de UI y líneas de puro estado para quedarnos con
+    // el nombre del hotel, la localidad, la duración y el precio.
+    const lineas = rawLineas.filter(l => !esBasura(l) && !esEstado(l));
     if (!lineas.length) continue;
 
-    const nombre = lineas[0];
-    if (!nombre || seen.has(nombre)) continue;
-    seen.add(nombre);
+    // El nombre del hotel: preferimos una línea "en mayúsculas" que no sea
+    // duración ni precio (los nombres de hotel suelen venir en mayúsculas).
+    let nombre = lineas.find(l =>
+      !esDuracion(l) && !esPrecio(l) &&
+      l === l.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(l)
+    );
+    // Si no hay ninguna línea en mayúsculas, cogemos la primera que no sea
+    // duración/precio (mejor que quedarnos con un estado o una cifra suelta).
+    if (!nombre) {
+      nombre = lineas.find(l => !esDuracion(l) && !esPrecio(l)) || lineas[0];
+    }
+    if (!nombre) continue;
+    const clave = estado + '|' + nombre;
+    if (seen.has(clave)) continue;
+    seen.add(clave);
 
     const precioM = txt.match(/(\d{2,5}(?:[.,]\d{1,2})?)\s*€/);
     const precio = precioM ? (precioM[1] + ' €') : '';
 
-    const extras = lineas.slice(1)
-      .filter(l => !/\d+\s*€/.test(l))
+    const extras = lineas
+      .filter(l => l !== nombre && !esPrecio(l))
       .slice(0, 5);
 
+    // El estado va como primer segmento, SEPARADO del nombre, para que
+    // el código Python pueda extraer el nombre real del hotel sin
+    // arrastrar la etiqueta de estado.
     out.push({
       nombre: nombre,
       precio: precio,
-      linea: [nombre, ...extras, precio].filter(Boolean).join(' | ')
+      estado: estado,
+      linea: [`[${estado.toUpperCase()}]`, nombre, ...extras, precio].filter(Boolean).join(' | ')
     });
   }
   return out;
@@ -1216,8 +1281,11 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
     _cerrar_modales(page, debug=debug)
     print(f"      → Intentando reserva para: {linea_hotel[:80]}...")
     try:
-        partes = [p.strip() for p in linea_hotel.split("|") if p.strip()]
-        nombre_hotel = partes[0] if partes else linea_hotel[:60]
+        # Quitamos la etiqueta de estado ('[DISPONIBLE] ', etc.) antes de
+        # partir por '|', para no usarla como si fuera el nombre del hotel.
+        linea_sin_estado = quitar_etiqueta_estado(linea_hotel)
+        partes = [p.strip() for p in linea_sin_estado.split("|") if p.strip()]
+        nombre_hotel = partes[0] if partes else linea_sin_estado[:60]
         print(f"      (nombre a buscar: '{nombre_hotel}')")
         fila = None
         for sel in ["tr", "li", "div"]:
@@ -1228,17 +1296,20 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if not fila:
             print("      ✗ No encuentro la fila del hotel")
             return False
+        # La acción de la fila puede llamarse "ver detalles" o "Seleccionar"
+        # según la pantalla, así que aceptamos ambas.
+        rx_accion = re.compile(r"seleccionar|ver\s+detalles?", re.I)
         btn_sel = fila.locator(
             "button, a, input[type='button'], input[type='submit'], [role='button']"
-        ).filter(has_text=re.compile(r"seleccionar", re.I)).first
+        ).filter(has_text=rx_accion).first
         if btn_sel.count() == 0:
-            btn_sel = fila.get_by_role("button", name=re.compile(r"seleccionar", re.I)).first
+            btn_sel = fila.get_by_role("button", name=rx_accion).first
         if btn_sel.count() == 0:
-            print("      ✗ No encuentro botón SELECCIONAR en la fila")
+            print("      ✗ No encuentro botón VER DETALLES / SELECCIONAR en la fila")
             if debug:
                 shot(page, "04_sin_boton_seleccionar", debug)
             return False
-        print("      → Pulsando SELECCIONAR...")
+        print("      → Pulsando VER DETALLES / SELECCIONAR...")
         _cerrar_modales(page, debug=debug)
         try:
             with context.expect_page(timeout=8000) as nueva_info:
@@ -1345,28 +1416,45 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
             d["en_lista_espera"] = False
+            d["reserva_intentada"] = False
+            d["reserva_ok"] = None
+            d["reserva_hotel"] = None
+            d["reserva_motivo"] = None
             dias_todos.append(d)
             if HACER_RESERVA:
                 if not debe_reservar(destino, provincia, d.get("mes", "")):
+                    d["reserva_motivo"] = "fuera del rango de meses a reservar"
                     continue
                 lineas_a_reservar = []
                 if PROBAR_RESERVA_SIN_FILTRO:
-                    if detalle:
-                        lineas_a_reservar = [detalle[0]]
+                    candidatas = [l for l in detalle if es_linea_disponible(l)]
+                    if candidatas:
+                        lineas_a_reservar = [candidatas[0]]
+                    elif detalle:
+                        print("      ⏭ [MUNDICOLOR] Todas las filas están Completo/Espera, no reservo")
+                        d["reserva_motivo"] = "todas las opciones estaban Completo o en lista de espera"
                 else:
                     for linea in detalle:
-                        if hotel_match_estricto(linea):
+                        if es_linea_disponible(linea) and hotel_match_estricto(linea):
                             lineas_a_reservar = [linea]
                             break
+                    if not lineas_a_reservar:
+                        d["reserva_motivo"] = "ningún hotel de la lista objetivo estaba disponible"
                 if not lineas_a_reservar:
                     continue
                 for linea in lineas_a_reservar:
                     if SOLO_RESERVAR_4_ESTRELLAS_MUNDICOLOR and not es_hotel_4_estrellas(linea):
                         print(f"      ⏭ [MUNDICOLOR] Omito reserva (no es 4★): {linea[:70]}")
+                        d["reserva_motivo"] = "el hotel disponible no es 4★, se omitió la reserva"
                         continue
+                    nombre_para_email = quitar_etiqueta_estado(linea).split("|")[0].strip()
+                    d["reserva_intentada"] = True
+                    d["reserva_hotel"] = nombre_para_email
                     print(f"      ↪ [MUNDICOLOR] Reserva día {d['dia']} de {d['mes']} "
                           f"({destino}/{provincia})")
                     ok = intentar_reserva(page, context, linea, debug)
+                    d["reserva_ok"] = ok
+                    d["reserva_motivo"] = None if ok else "el intento de reserva falló en la web (ver logs)"
                     print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
                     try:
                         if not page.locator("#destination-accreditation").first.is_visible(timeout=1500):
@@ -1478,6 +1566,10 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
             d["provincia"] = provincia
             d["hoteles_objetivo"] = sorted(hoteles_encontrados)
             d["es_objetivo"] = bool(hoteles_encontrados)
+            d["reserva_intentada"] = False
+            d["reserva_ok"] = None
+            d["reserva_hotel"] = None
+            d["reserva_motivo"] = None
             dias_todos.append(d)
 
             if not HACER_RESERVA:
@@ -1485,13 +1577,19 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
 
             lineas_a_reservar = []
             if PROBAR_RESERVA_SIN_FILTRO:
-                if detalle:
-                    lineas_a_reservar = [detalle[0]]
+                candidatas = [l for l in detalle if es_linea_disponible(l)]
+                if candidatas:
+                    lineas_a_reservar = [candidatas[0]]
+                elif detalle:
+                    print("      ⏭ [TURISMOSOCIAL] Todas las filas están Completo, no reservo")
+                    d["reserva_motivo"] = "todas las opciones estaban Completo"
             else:
                 for linea in detalle:
-                    if hotel_match_estricto(linea):
+                    if es_linea_disponible(linea) and hotel_match_estricto(linea):
                         lineas_a_reservar = [linea]
                         break
+                if not lineas_a_reservar:
+                    d["reserva_motivo"] = "ningún hotel de la lista objetivo estaba disponible"
             if not lineas_a_reservar:
                 continue
 
@@ -1499,6 +1597,7 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                 # 1) ¿4★?
                 if SOLO_RESERVAR_4_ESTRELLAS_TS and not es_hotel_4_estrellas(linea):
                     print(f"      ⏭ [TURISMOSOCIAL] Omito reserva (no es 4★): {linea[:70]}")
+                    d["reserva_motivo"] = "el hotel disponible no es 4★, se omitió la reserva"
                     continue
 
                 # 2) ¿Estancia de 10 días?
@@ -1507,18 +1606,28 @@ def comprobar_combo_turismosocial(page, context, zona, provincia, debug, primera
                     print(f"      ⏭ [TURISMOSOCIAL] Omito reserva "
                           f"(estancia {dias if dias is not None else '?'} días ≠ {DIAS_ESTANCIA_TS}): "
                           f"{linea[:70]}")
+                    d["reserva_motivo"] = (
+                        f"la estancia encontrada ({dias if dias is not None else '?'} días) "
+                        f"no son los {DIAS_ESTANCIA_TS} días requeridos"
+                    )
                     continue
 
                 # 3) Lista de espera: cualquier posición vale (sin restricción)
                 if not debe_reservar_turismosocial(
                         d.get("mes", ""),
                         en_lista_espera=d.get("en_lista_espera", False)):
+                    d["reserva_motivo"] = "fuera del rango de meses a reservar"
                     continue
 
                 tipo = "espera" if d.get("en_lista_espera") else "disponible"
+                nombre_para_email = quitar_etiqueta_estado(linea).split("|")[0].strip()
+                d["reserva_intentada"] = True
+                d["reserva_hotel"] = nombre_para_email
                 print(f"      ↪ [TURISMOSOCIAL:{tipo}] Reserva día {d['dia']} de "
                       f"{d['mes']} ({zona}/{provincia}) · {dias} días")
                 ok = intentar_reserva(page, context, linea, debug)
+                d["reserva_ok"] = ok
+                d["reserva_motivo"] = None if ok else "el intento de reserva falló en la web (ver logs)"
                 print("      ✓ Reserva completada" if ok else "      ✗ Reserva fallida")
                 try:
                     if page.locator("select:visible").count() == 0:
@@ -1558,6 +1667,20 @@ def enviar_email(asunto, cuerpo, debug=False):
         return False
 
 
+def _linea_estado_reserva(d):
+    if not d.get("reserva_intentada"):
+        motivo = d.get("reserva_motivo")
+        if motivo:
+            return f"      ⏭ No se ha reservado ({motivo})"
+        return None
+    if d.get("reserva_ok"):
+        hotel = d.get("reserva_hotel") or "(hotel no identificado)"
+        return f"      ✅ RESERVADO: {hotel}"
+    hotel = d.get("reserva_hotel") or "(hotel no identificado)"
+    motivo = d.get("reserva_motivo") or "motivo desconocido"
+    return f"      ❌ Reserva INTENTADA pero FALLIDA: {hotel} — {motivo}"
+
+
 def _seccion_cuerpo(res_seccion, combos):
     if not res_seccion:
         return "(sin datos)"
@@ -1588,6 +1711,9 @@ def _seccion_cuerpo(res_seccion, combos):
                     lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}   [{hoteles}]")
                 else:
                     lineas.append(f"{prefijo}Día {d['dia']} de {d['mes']}")
+                estado_reserva = _linea_estado_reserva(d)
+                if estado_reserva:
+                    lineas.append(estado_reserva)
                 for l in d.get("detalle", []):
                     lineas.append(f"      {l}")
         lineas.append("")
@@ -1607,10 +1733,13 @@ def construir_cuerpo_combinado(res):
         "",
         sep, "MUNDICOLOR", sep,
         _seccion_cuerpo(res_mundi, combos_mundi),
-        "",
-        sep, "TURISMOSOCIAL", sep,
-        _seccion_cuerpo(res_ts, combos_ts),
     ]
+    if COMPROBAR_TURISMOSOCIAL:
+        partes += [
+            "",
+            sep, "TURISMOSOCIAL", sep,
+            _seccion_cuerpo(res_ts, combos_ts),
+        ]
     return "\n".join(partes)
 
 
@@ -1633,10 +1762,13 @@ def comprobar(debug=False, solo=None):
         for (d, p), _f in FILTRO_RESERVA_POR_PROVINCIA.items():
             if d == dest:
                 print(f"       · {p}: {descripcion_filtro_reserva(d, p)}")
-    print("→ TurismoSocial: zonas =", ZONAS_TURISMOSOCIAL)
-    print(f"→ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abril–octubre)")
-    print(f"→ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} días")
-    print("→ TurismoSocial: lista de espera SIN restricción de posición")
+    if COMPROBAR_TURISMOSOCIAL:
+        print("→ TurismoSocial: zonas =", ZONAS_TURISMOSOCIAL)
+        print(f"→ TurismoSocial: meses = {sorted(MESES_TURISMOSOCIAL)} (abril–octubre)")
+        print(f"→ TurismoSocial: estancia requerida = {DIAS_ESTANCIA_TS} días")
+        print("→ TurismoSocial: lista de espera SIN restricción de posición")
+    else:
+        print("→ TurismoSocial: DESACTIVADO (COMPROBAR_TURISMOSOCIAL = False), no se comprueba")
     print("→ Email: SOLO se envía si hay al menos un día DISPONIBLE (no basta lista de espera)")
     if SOLO_RESERVAR_4_ESTRELLAS_TS:
         print("⚠️  Filtro 4★ activo SOLO en TurismoSocial")
@@ -1733,7 +1865,10 @@ def comprobar(debug=False, solo=None):
             }
 
             # ============ TURISMOSOCIAL ============
-            if solo:
+            if not COMPROBAR_TURISMOSOCIAL:
+                print("\n(TurismoSocial desactivado: COMPROBAR_TURISMOSOCIAL = False, no se comprueba)")
+                resultado_ts = None
+            elif solo:
                 print("\n(flag --solo activo: se omite TurismoSocial)")
                 resultado_ts = None
             else:
@@ -1858,7 +1993,8 @@ def mostrar(res, debug=False):
 
     print(f"\n[{res['fecha_consulta']}]")
     print(f"  Mundicolor    : {n_disp_real_mundi} disponible(s) · {n_espera_mundi} en lista de espera")
-    print(f"  TurismoSocial : {n_disp_real_ts} disponible(s) · {n_espera_ts} en lista de espera")
+    if COMPROBAR_TURISMOSOCIAL:
+        print(f"  TurismoSocial : {n_disp_real_ts} disponible(s) · {n_espera_ts} en lista de espera")
 
     ASUNTO = "[IMSERSO 2027] Disponibilidad hoteles islas y península"
 
