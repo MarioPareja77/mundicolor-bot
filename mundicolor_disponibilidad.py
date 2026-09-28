@@ -125,13 +125,13 @@ SOLO_RESERVAR_4_ESTRELLAS_MUNDICOLOR = False  # Mundicolor: sin filtro de estrel
 # ---------------------------------------------------------------------
 
 FILTRO_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {3, 4}},
-    "CANARIAS": {"anio": 2027, "meses": {4, 5, 6}},
+    "BALEARES": {"anio": 2027, "meses": {8}},
+    "CANARIAS": {"anio": 2027, "meses": {3, 4}},
 }
 
 FILTRO_RESERVA_POR_DESTINO = {
-    "BALEARES": {"anio": 2027, "meses": {3, 4}},
-    "CANARIAS": {"anio": 2027, "meses": {4, 5, 6}},
+    "BALEARES": {"anio": 2027, "meses": {8}},
+    "CANARIAS": {"anio": 2027, "meses": {3, 4}},
 }
 
 # Mismo rango de meses para todas las islas de cada destino, así que no
