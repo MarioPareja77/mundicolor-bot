@@ -1201,80 +1201,94 @@ def detalle_dia(page, idx, debug=False, attr="libre"):
 # ---------------------------------------------------------------------
 # RESERVA
 # ---------------------------------------------------------------------
-def _marcar_todos_los_checkboxes(page, debug=False, timeout_s=8):
-    t0 = time.time()
-    while (time.time() - t0) < timeout_s:
-        try:
-            n = page.locator("input[type='checkbox']").count()
-        except Exception:
-            n = 0
-        if n > 0:
-            break
-        page.wait_for_timeout(300)
+# Flujo real de la web:
+#   1) Lista de hoteles: cada fila tiene "ver detalles" (abre una ficha en
+#      modal, NO reserva) y "SELECCIONAR" (lleva a la página de confirmación).
+#   2) Página de confirmación (#confirmationBtn = "Finalizar reserva"):
+#        - #important-note  (nota del suplemento por 2º viaje; puede no existir)
+#        - #terms           (política de privacidad y condiciones)
+#      Las demás checkboxes (servicios especiales, RGPD, forma de pago) NO se tocan.
+#   3) Al finalizar puede salir #bookConfirmationModal ("¿finalizar igualmente?")
+#      → botón #confirmCloseBtn ("Sí").
 
-    checkboxes = page.locator("input[type='checkbox']")
-    n = checkboxes.count()
-    print(f"      Checkboxes encontradas: {n}")
-    marcadas = 0
-    visibles = 0
-    for i in range(n):
-        cb = checkboxes.nth(i)
+def _marcar_cb(cb):
+    """Intenta marcar una checkbox por varias vías, de la menos a la más agresiva."""
+    for intento in (
+        lambda: cb.check(timeout=2000),
+        lambda: cb.check(timeout=2000, force=True),
+        lambda: cb.locator("xpath=ancestor::label").first.click(timeout=2000),
+        lambda: cb.evaluate("""el => { el.checked = true;
+            el.dispatchEvent(new Event('input',{bubbles:true}));
+            el.dispatchEvent(new Event('change',{bubbles:true})); }"""),
+    ):
         try:
-            if not cb.is_visible():
-                continue
-            visibles += 1
+            intento()
             if cb.is_checked():
-                marcadas += 1
-                print(f"      ✓ Checkbox {i+1} ya estaba marcada")
-                continue
-            try:
-                cb.check(timeout=2500)
-            except Exception:
-                try:
-                    cb.check(timeout=2500, force=True)
-                except Exception:
-                    cb.click(timeout=2500, force=True)
-            if cb.is_checked():
-                marcadas += 1
-                print(f"      ✓ Checkbox {i+1} marcada")
-            else:
-                print(f"      (checkbox {i+1} no se pudo marcar)")
-        except Exception as e:
-            print(f"      (checkbox {i+1} error: {e})")
-    print(f"      → Checkboxes visibles={visibles}, marcadas={marcadas}")
-    return marcadas, visibles
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _marcar_todos_los_checkboxes(page, debug=False, timeout_s=8):
+    """Marca solo las checkboxes obligatorias de la página de confirmación."""
+    page.wait_for_selector("#terms", state="attached", timeout=timeout_s * 1000)
+    marcadas = 0
+    ids = ("important-note", "terms")   # 'important-note' solo sale en 2º viaje
+    for cid in ids:
+        cb = page.locator(f"#{cid}")
+        if cb.count() == 0:
+            print(f"      (no hay #{cid} en esta reserva)")
+            continue
+        if cb.is_checked() or _marcar_cb(cb):
+            marcadas += 1
+            print(f"      ✓ #{cid} marcada")
+        else:
+            print(f"      ✗ #{cid} NO se pudo marcar")
+    return marcadas, len(ids)
 
 
 def _pulsar_finalizar_reserva(page, debug=False):
-    print("      → Buscando FINALIZAR RESERVA...")
+    print("      → Pulsando FINALIZAR RESERVA...")
+    btn = page.locator("#confirmationBtn")
     try:
-        btn = page.locator(
-            "button, a, input[type='button'], input[type='submit'], [role='button']"
-        ).filter(has_text=re.compile(r"finalizar\s+reserva", re.I)).first
-        if btn.count() > 0:
-            try:
-                btn.click(timeout=5000)
-            except PWTimeout:
-                _cerrar_modales(page, debug=debug)
-                btn.click(timeout=5000, force=True)
-            print("      ✓ FINALIZAR RESERVA pulsado")
-            return True
+        btn.scroll_into_view_if_needed(timeout=3000)
+        btn.click(timeout=5000)
+    except Exception:
+        try:
+            btn.evaluate("e => e.click()")
+        except Exception as e:
+            print(f"      ✗ No pude pulsar #confirmationBtn: {e}")
+            return False
+    page.wait_for_timeout(1500)
+
+    # Aviso "no se ha informado de todos los DNIs": confirmar con Sí.
+    # (No llamamos a _cerrar_modales aquí: pulsaría la X, que equivale a "No".)
+    try:
+        si = page.locator("#confirmCloseBtn")
+        if si.is_visible(timeout=1500):
+            print("      (aviso de DNIs: confirmo con 'Sí')")
+            si.click()
+            page.wait_for_timeout(1500)
     except Exception:
         pass
+
+    page.wait_for_timeout(2000)
+
+    # Modal de error: "no hay plazas disponibles para la opción seleccionada"
     try:
-        btn = page.get_by_role(
-            "button", name=re.compile(r"finalizar\s+reserva", re.I)
-        ).first
-        try:
-            btn.click(timeout=5000)
-        except PWTimeout:
-            _cerrar_modales(page, debug=debug)
-            btn.click(timeout=5000, force=True)
-        print("      ✓ FINALIZAR RESERVA pulsado (por role)")
-        return True
-    except Exception as e:
-        print(f"      ✗ No encuentro botón FINALIZAR RESERVA: {e}")
-        return False
+        if page.locator("#completeModal").is_visible(timeout=1000):
+            try:
+                txt = page.locator("#completeModal .text").inner_text().strip().replace("\n", " ")
+            except Exception:
+                txt = "(sin texto)"
+            print(f"      ✗ La web rechazó la reserva: {txt[:160]}")
+            return False
+    except Exception:
+        pass
+
+    print(f"      → URL tras finalizar: {page.url}")
+    return True
 
 
 def intentar_reserva(page, context, linea_hotel, debug=False):
@@ -1296,72 +1310,71 @@ def intentar_reserva(page, context, linea_hotel, debug=False):
         if not fila:
             print("      ✗ No encuentro la fila del hotel")
             return False
-        # La acción de la fila puede llamarse "ver detalles" o "Seleccionar"
-        # según la pantalla, así que aceptamos ambas.
-        rx_accion = re.compile(r"seleccionar|ver\s+detalles?", re.I)
-        btn_sel = fila.locator(
-            "button, a, input[type='button'], input[type='submit'], [role='button']"
-        ).filter(has_text=rx_accion).first
+
+        # Cada fila tiene "ver detalles" (solo abre la ficha) y "SELECCIONAR"
+        # (lleva a la confirmación). Hay que pulsar SELECCIONAR, no el primero.
+        cand = "button, a, input[type='button'], input[type='submit'], [role='button']"
+        btn_sel = fila.locator(cand).filter(
+            has_text=re.compile(r"^\s*seleccionar\s*$", re.I)).first
         if btn_sel.count() == 0:
-            btn_sel = fila.get_by_role("button", name=rx_accion).first
+            btn_sel = fila.locator(cand).filter(
+                has_text=re.compile(r"seleccionar", re.I)).first
         if btn_sel.count() == 0:
-            print("      ✗ No encuentro botón VER DETALLES / SELECCIONAR en la fila")
-            if debug:
-                shot(page, "04_sin_boton_seleccionar", debug)
+            print("      ✗ La fila no tiene botón SELECCIONAR (solo 'ver detalles')")
+            _dump_debug(page, "sin_boton_seleccionar")
             return False
-        print("      → Pulsando VER DETALLES / SELECCIONAR...")
+
+        print("      → Pulsando SELECCIONAR...")
         _cerrar_modales(page, debug=debug)
+        clicado = False
+        usa_nueva_pestana = False
         try:
-            with context.expect_page(timeout=8000) as nueva_info:
-                btn_sel.click()
+            with context.expect_page(timeout=5000) as nueva_info:
+                btn_sel.click(timeout=8000)
+                clicado = True
             nueva = nueva_info.value
             print("      ✓ Nueva pestaña abierta")
             usa_nueva_pestana = True
         except PWTimeout:
-            print("      (no se abrió nueva pestaña, asumo navegación en la misma)")
-            try:
-                btn_sel.click(timeout=8000)
-            except PWTimeout:
+            # Si el clic ya se hizo, NO se vuelve a pulsar (el botón ya no
+            # existe tras navegar). Solo se reintenta si el clic falló.
+            if not clicado:
                 _cerrar_modales(page, debug=debug)
                 btn_sel.click(timeout=8000, force=True)
-            page.wait_for_load_state("networkidle", timeout=15000)
+            print("      (no se abrió nueva pestaña, asumo navegación en la misma)")
             nueva = page
-            usa_nueva_pestana = False
 
-        nueva.wait_for_timeout(2500)
-        _cerrar_modales(nueva, debug=debug)
-        if debug:
-            shot(nueva, "04_pagina_reserva", debug)
-
-        marcadas, visibles = _marcar_todos_los_checkboxes(nueva, debug=debug)
-        if visibles == 0:
-            print("      ⚠ No aparecen checkboxes; continúo igualmente.")
-
-        nueva.wait_for_timeout(1000)
-        _cerrar_modales(nueva, debug=debug)
-        if debug:
-            shot(nueva, "05_checkboxes_marcadas", debug)
-
-        ok_final = _pulsar_finalizar_reserva(nueva, debug=debug)
-        if not ok_final:
-            if debug:
-                shot(nueva, "05_sin_boton_finalizar", debug)
+        # Esperamos a estar de verdad en la página de confirmación.
+        try:
+            nueva.wait_for_selector("#confirmationBtn", state="visible", timeout=20000)
+        except PWTimeout:
+            print("      ✗ No llegué a la página de confirmación")
+            _dump_debug(nueva, "no_confirmacion")
             if usa_nueva_pestana:
                 try:
                     nueva.close()
                 except Exception:
                     pass
             return False
-
-        nueva.wait_for_timeout(3000)
+        print("      ✓ Página de confirmación cargada")
         if debug:
-            shot(nueva, "06_finalizado", debug)
+            shot(nueva, "04_pagina_confirmacion", debug)
+
+        marcadas, total = _marcar_todos_los_checkboxes(nueva, debug=debug)
+        if marcadas == 0:
+            print("      ⚠ No se marcó ninguna checkbox obligatoria; intento finalizar igualmente.")
+        if debug:
+            shot(nueva, "05_checkboxes_marcadas", debug)
+
+        ok_final = _pulsar_finalizar_reserva(nueva, debug=debug)
+        if debug:
+            shot(nueva, "06_finalizado" if ok_final else "05_fallo_finalizar", debug)
         if usa_nueva_pestana:
             try:
                 nueva.close()
             except Exception:
                 pass
-        return True
+        return ok_final
     except Exception as e:
         print(f"      [RESERVA ERROR] {e}")
         if debug:
@@ -1389,8 +1402,11 @@ def comprobar_combo(page, context, destino, provincia, debug, primera=False):
                 print("      (formulario ya cargado: solo cambio destino/provincia y BUSCAR)")
                 aplicar_destino_provincia_y_buscar(page, destino, provincia, debug)
             else:
-                print("      (no veo el formulario, hago flujo completo)")
-                flujo_completo(page, destino, provincia, debug, con_login=False)
+                # Tras una reserva (o un intento fallido) la página queda en la
+                # pantalla de confirmación: hay que recargar y volver a meter
+                # los pasajeros.
+                print("      (no veo el formulario, recargo y hago flujo completo con login)")
+                flujo_completo(page, destino, provincia, debug, con_login=True)
         _cerrar_modales(page, debug=debug)
         dias = page.evaluate(JS_DIAS_VERDES)
         filtro = FILTRO_POR_DESTINO.get(destino.upper())
