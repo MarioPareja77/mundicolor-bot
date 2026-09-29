@@ -113,9 +113,9 @@ HOTELES_OBJETIVO = [
     "Royal Suite Hotel",
 ]
 
-PROBAR_EMAIL_SIN_FILTRO = True
+PROBAR_EMAIL_SIN_FILTRO = False
 HACER_RESERVA = True
-PROBAR_RESERVA_SIN_FILTRO = True
+PROBAR_RESERVA_SIN_FILTRO = False
 # ---------------------------------------------------------------------
 
 # ------------- FILTRO 4 ESTRELLAS PARA RESERVAR ----------------------
